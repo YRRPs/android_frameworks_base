@@ -1,11 +1,16 @@
+# SPDX-FileCopyrightText: Yim's Riced ROM Project
+# SPDX-License-Identifier: Apache-2.0
 """Checks the YRRP Matrix asset generator against the layout the shader expects.
 
 Run: KANA_FONT=... LOGO_FONT=... python3 -m unittest test_gen_yrrp_matrix_assets
 """
 
+import sys
+
+sys.dont_write_bytecode = True  # keep __pycache__ out of the source tree
+
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,13 +28,17 @@ LOGO_FONT = os.environ.get("LOGO_FONT", "")
 class GeneratorTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.out = Path(tempfile.mkdtemp())
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.out = Path(cls.tmp.name)
         subprocess.run(
             [sys.executable, "-I", str(GENERATOR), "--kana-font", KANA_FONT,
              "--kana-index", "0", "--logo-font", LOGO_FONT, "--out", str(cls.out)],
             check=True)
-        cls.atlas = Image.open(cls.out / "yrrp-matrix-atlas.png")
-        cls.logo = Image.open(cls.out / "yrrp-matrix-logo.png")
+        with Image.open(cls.out / "yrrp-matrix-atlas.png") as atlas:
+            cls.atlas = atlas.copy()
+        with Image.open(cls.out / "yrrp-matrix-logo.png") as logo:
+            cls.logo = logo.copy()
 
     def test_atlas_is_rgb_8x8_grid_of_64px_cells(self):
         self.assertEqual("RGB", self.atlas.mode)
@@ -62,11 +71,31 @@ class GeneratorTest(unittest.TestCase):
         self.assertLess(abs((left + right) / 2 - 512), 24)
         self.assertLess(abs((top + bottom) / 2 - 150), 24)
 
+
+FORBIDDEN_CHUNKS = {b"PLTE", b"tRNS", b"iCCP"}
+
+
+def png_chunk_types(data):
+    types, pos = [], 8
+    while pos < len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        types.append(data[pos + 4:pos + 8])
+        pos += 12 + length
+    return types
+
+
+class CommittedAssetsTest(unittest.TestCase):
+    """Always runs: AImageDecoder needs plain 8-bit RGB PNGs."""
+
     def test_committed_assets_match_the_layout(self):
         for name, size in (("yrrp-matrix-atlas.png", (512, 512)),
                            ("yrrp-matrix-logo.png", (1024, 300))):
-            image = Image.open(COMMITTED / name)
-            self.assertEqual(("RGB", size), (image.mode, image.size), name)
+            data = (COMMITTED / name).read_bytes()
+            self.assertEqual(b"\x89PNG\r\n\x1a\n", data[:8], name)
+            self.assertEqual(b"\x08\x02", data[24:26], f"{name} is not 8-bit RGB")
+            self.assertFalse(FORBIDDEN_CHUNKS & set(png_chunk_types(data)), name)
+            with Image.open(COMMITTED / name) as image:
+                self.assertEqual(("RGB", size), (image.mode, image.size), name)
 
 
 if __name__ == "__main__":

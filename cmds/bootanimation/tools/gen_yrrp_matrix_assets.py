@@ -4,7 +4,8 @@
 """Renders the YRRP Matrix boot animation assets.
 
 yrrp-matrix-atlas.png: 512x512 RGB, 8x8 cells of 64 px, white mirrored glyphs on
-black: half-width katakana U+FF66-U+FF9D, then the digits 01234578.
+black: half-width katakana U+FF66-U+FF9D, then the digits 01234578. The digits 6
+and 9 are left out so that 56 kana + 8 digits fill the 64 cells.
 yrrp-matrix-logo.png: 1024x300 RGB, "YRRP" in white on black.
 
 Fonts used for the committed PNGs: Noto Sans CJK JP Regular (face 0 of
