@@ -215,5 +215,26 @@ TEST(YrrpMatrixStatusTest, everyValueFitsAPropertyValue) {
     }
 }
 
+TEST(YrrpMatrixStatusTest, resultIsOnlyPublishedForMatrixRuns) {
+    for (const MatrixRoute route : {MatrixRoute::Stock, MatrixRoute::Exit}) {
+        MatrixStatus status;
+        status.route = route;
+        status.outcome = "COMPLETED";
+        EXPECT_EQ(0u, asMap(status).count("sys.yrrp.bootanim.result"));
+    }
+}
+
+TEST(YrrpMatrixStatusTest, hugeFrameTimesStillFitAPropertyValue) {
+    MatrixStatus status;
+    status.route = MatrixRoute::Matrix;
+    status.outcome = "SWAP_FAILED";
+    status.frames = 999999999;
+    status.averageFrameMs = 1e300;
+    status.maxFrameMs = 1e300;
+    for (const auto& [key, value] : statusProperties(status)) {
+        EXPECT_LT(value.size(), 92u) << key;
+    }
+}
+
 }  // namespace
 }  // namespace android::yrrp
