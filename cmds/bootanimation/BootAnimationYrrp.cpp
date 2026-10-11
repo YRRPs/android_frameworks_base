@@ -81,7 +81,6 @@ bool BootAnimation::playYrrpBootAnimation() {
     status.config = yrrp::parseMatrixConfig(android::base::GetProperty(yrrp::kStyleProp, ""),
                                             android::base::GetProperty(yrrp::kFullIntroProp, ""));
     status.shuttingDown = mShuttingDown;
-    status.propsReady = android::base::GetBoolProperty("ro.persistent_properties.ready", false);
     status.route = yrrp::routeFor(status.config.style, mShuttingDown);
     ALOGI("config %s", yrrp::configValue(status).c_str());
     if (status.route != yrrp::MatrixRoute::Matrix) {

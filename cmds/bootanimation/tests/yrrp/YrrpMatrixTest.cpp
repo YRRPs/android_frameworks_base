@@ -167,10 +167,9 @@ std::map<std::string, std::string> asMap(const MatrixStatus& status) {
 TEST(YrrpMatrixStatusTest, defaultMatrixRunPublishesEveryGate) {
     MatrixStatus status;
     status.config = parseMatrixConfig("", "");
-    status.propsReady = true;
     status.route = MatrixRoute::Matrix;
     const auto map = asMap(status);
-    EXPECT_EQ("style=matrix/default fullIntro=1/default shutdown=0 propsReady=1",
+    EXPECT_EQ("style=matrix/default fullIntro=1/default shutdown=0",
               map.at("sys.yrrp.bootanim.config"));
     EXPECT_EQ("MATRIX", map.at("sys.yrrp.bootanim.route"));
     EXPECT_EQ("none", map.at("sys.yrrp.bootanim.blocked_by"));
@@ -181,7 +180,6 @@ TEST(YrrpMatrixStatusTest, configValueMatchesThePublishedConfig) {
     MatrixStatus status;
     status.config = parseMatrixConfig("lineage", "0");
     status.shuttingDown = true;
-    status.propsReady = true;
     status.route = MatrixRoute::Exit;
     EXPECT_EQ(asMap(status).at("sys.yrrp.bootanim.config"), configValue(status));
 }
@@ -192,8 +190,7 @@ TEST(YrrpMatrixStatusTest, initFailureNamesTheBlockingStage) {
     status.route = MatrixRoute::Stock;
     status.blockedBy = "COMPILE";
     const auto map = asMap(status);
-    EXPECT_EQ("style=matrix/prop fullIntro=0/prop shutdown=0 propsReady=0",
-              map.at("sys.yrrp.bootanim.config"));
+    EXPECT_EQ("style=matrix/prop fullIntro=0/prop shutdown=0", map.at("sys.yrrp.bootanim.config"));
     EXPECT_EQ("STOCK", map.at("sys.yrrp.bootanim.route"));
     EXPECT_EQ("COMPILE", map.at("sys.yrrp.bootanim.blocked_by"));
 }

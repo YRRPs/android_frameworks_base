@@ -11,11 +11,10 @@ namespace android::yrrp {
 
 std::string configValue(const MatrixStatus& status) {
     char buffer[92];
-    snprintf(buffer, sizeof(buffer), "style=%s/%s fullIntro=%d/%s shutdown=%d propsReady=%d",
+    snprintf(buffer, sizeof(buffer), "style=%s/%s fullIntro=%d/%s shutdown=%d",
              styleName(status.config.style), status.config.styleFromProp ? "prop" : "default",
-             status.config.fullIntro ? 1 : 0,
-             status.config.fullIntroFromProp ? "prop" : "default", status.shuttingDown ? 1 : 0,
-             status.propsReady ? 1 : 0);
+             status.config.fullIntro ? 1 : 0, status.config.fullIntroFromProp ? "prop" : "default",
+             status.shuttingDown ? 1 : 0);
     return buffer;
 }
 

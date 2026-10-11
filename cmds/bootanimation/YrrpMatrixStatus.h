@@ -18,7 +18,6 @@ namespace android::yrrp {
 struct MatrixStatus {
     MatrixConfig config;
     bool shuttingDown = false;
-    bool propsReady = false;
     MatrixRoute route = MatrixRoute::Matrix;
     std::string blockedBy = "none";  // STYLE_LINEAGE, ASSET_ATLAS, ASSET_LOGO, COMPILE, LINK, GL
     std::string outcome;             // COMPLETED, EXIT_PENDING, SWAP_FAILED; empty until the end
