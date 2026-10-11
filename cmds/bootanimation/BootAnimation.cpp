@@ -821,9 +821,12 @@ bool BootAnimation::threadLoop() {
     bool result;
     initShaders();
 
-    // We have no bootanimation file, so we use the stock android logo
-    // animation.
-    if (mZipFileName.empty()) {
+    if (playYrrpBootAnimation()) {
+        // YRRP: the Matrix animation played, or this run ends with no animation.
+        result = false;
+    } else if (mZipFileName.empty()) {
+        // We have no bootanimation file, so we use the stock android logo
+        // animation.
         ALOGD("No animation file");
         result = android(mDisplays.front());
     } else {
