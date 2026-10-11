@@ -74,6 +74,7 @@ namespace {
 
 TEST(YrrpMatrixTimelineTest, beforeExitPlaysIntroThenLoop) {
     const MatrixTimeline timeline(/*fullIntro=*/true, /*shuttingDown=*/false);
+    EXPECT_FALSE(timeline.exitDeferred());
     const MatrixFrame intro = timeline.frame(1.0);
     EXPECT_EQ(MatrixPhase::Intro, intro.phase);
     EXPECT_FLOAT_EQ(1.0f, intro.shaderTime);
@@ -120,6 +121,7 @@ TEST(YrrpMatrixTimelineTest, shutdownIgnoresExitAndNeverEnds) {
     MatrixTimeline timeline(true, true);
     timeline.onExitObserved(1.0);
     EXPECT_FALSE(timeline.exitObserved());
+    EXPECT_FALSE(timeline.exitDeferred());
     const MatrixFrame frame = timeline.frame(100.0);
     EXPECT_EQ(MatrixPhase::Loop, frame.phase);
     EXPECT_FLOAT_EQ(MatrixTimeline::kNoExit, frame.shaderExit);

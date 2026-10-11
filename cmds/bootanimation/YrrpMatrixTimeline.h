@@ -35,7 +35,7 @@ public:
     bool exitObserved() const { return mExitObserved; }
     double exitObservedAt() const { return mExitObservedAt; }
     double exitTime() const { return mExitTime; }
-    bool exitDeferred() const { return mExitTime > mExitObservedAt; }
+    bool exitDeferred() const { return mExitObserved && mExitTime > mExitObservedAt; }
 
 private:
     bool mFullIntro;
