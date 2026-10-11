@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
 #include "YrrpMatrixConfig.h"
+#include "YrrpMatrixStatus.h"
 #include "YrrpMatrixTimeline.h"
 
 namespace android::yrrp {
@@ -145,6 +148,71 @@ TEST(YrrpFrameStatsTest, emptyThenAverageAndMax) {
     EXPECT_EQ(2, stats.count());
     EXPECT_DOUBLE_EQ(15.0, stats.averageMs());
     EXPECT_DOUBLE_EQ(20.0, stats.maxMs());
+}
+
+}  // namespace
+}  // namespace android::yrrp
+
+namespace android::yrrp {
+namespace {
+
+std::map<std::string, std::string> asMap(const MatrixStatus& status) {
+    std::map<std::string, std::string> map;
+    for (const auto& [key, value] : statusProperties(status)) {
+        map[key] = value;
+    }
+    return map;
+}
+
+TEST(YrrpMatrixStatusTest, defaultMatrixRunPublishesEveryGate) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("", "");
+    status.propsReady = true;
+    status.route = MatrixRoute::Matrix;
+    const auto map = asMap(status);
+    EXPECT_EQ("style=matrix/default fullIntro=1/default shutdown=0 propsReady=1",
+              map.at("sys.yrrp.bootanim.config"));
+    EXPECT_EQ("MATRIX", map.at("sys.yrrp.bootanim.route"));
+    EXPECT_EQ("none", map.at("sys.yrrp.bootanim.blocked_by"));
+    EXPECT_EQ(0u, map.count("sys.yrrp.bootanim.result"));
+}
+
+TEST(YrrpMatrixStatusTest, initFailureNamesTheBlockingStage) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("matrix", "false");
+    status.route = MatrixRoute::Stock;
+    status.blockedBy = "COMPILE";
+    const auto map = asMap(status);
+    EXPECT_EQ("style=matrix/prop fullIntro=0/prop shutdown=0 propsReady=0",
+              map.at("sys.yrrp.bootanim.config"));
+    EXPECT_EQ("STOCK", map.at("sys.yrrp.bootanim.route"));
+    EXPECT_EQ("COMPILE", map.at("sys.yrrp.bootanim.blocked_by"));
+}
+
+TEST(YrrpMatrixStatusTest, finishedRunPublishesTheResult) {
+    MatrixStatus status;
+    status.route = MatrixRoute::Matrix;
+    status.outcome = "COMPLETED";
+    status.frames = 312;
+    status.averageFrameMs = 16.94;
+    status.maxFrameMs = 211.38;
+    EXPECT_EQ("outcome=COMPLETED frames=312 avgMs=16.9 maxMs=211.4",
+              asMap(status).at("sys.yrrp.bootanim.result"));
+}
+
+TEST(YrrpMatrixStatusTest, everyValueFitsAPropertyValue) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("lineage", "false");
+    status.shuttingDown = true;
+    status.route = MatrixRoute::Matrix;
+    status.blockedBy = "ASSET_ATLAS";
+    status.outcome = "SWAP_FAILED";
+    status.frames = 999999999;
+    status.averageFrameMs = 99999.9;
+    status.maxFrameMs = 99999.9;
+    for (const auto& [key, value] : statusProperties(status)) {
+        EXPECT_LT(value.size(), 92u) << key;  // PROP_VALUE_MAX - 1
+    }
 }
 
 }  // namespace
