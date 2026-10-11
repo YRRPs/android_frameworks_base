@@ -81,7 +81,14 @@ cc_library_shared {
     name: "libbootanimation",
     defaults: ["bootanimation_defaults"],
 
-    srcs: ["BootAnimation.cpp"],
+    srcs: [
+        "BootAnimation.cpp",
+        // YRRP Matrix boot animation
+        "BootAnimationYrrp.cpp",
+        "YrrpMatrixConfig.cpp",
+        "YrrpMatrixStatus.cpp",
+        "YrrpMatrixTimeline.cpp",
+    ],
 
     shared_libs: [
         "libui",
@@ -90,4 +97,21 @@ cc_library_shared {
         "libGLESv2",
         "libgui",
     ],
+}
+
+// YRRP Matrix pure units (config, route, timeline, status); host and device.
+cc_test {
+    name: "bootanimation_yrrp_matrix_tests",
+    host_supported: true,
+    srcs: [
+        "YrrpMatrixConfig.cpp",
+        "YrrpMatrixStatus.cpp",
+        "YrrpMatrixTimeline.cpp",
+        "tests/yrrp/YrrpMatrixTest.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    test_suites: ["general-tests"],
 }

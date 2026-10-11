@@ -38,6 +38,8 @@
 
 namespace android {
 
+namespace yrrp { struct MatrixStatus; }
+
 class Surface;
 class SurfaceComposerClient;
 class SurfaceControl;
@@ -195,6 +197,14 @@ private:
     status_t initFont(Font* font, const char* fallback);
     void initShaders();
     bool android(const Display& display);
+    // YRRP Matrix boot animation, in BootAnimationYrrp.cpp. Returns true when
+    // this run is handled (Matrix played, or the run must end with no
+    // animation); false continues with the stock zip or logo path.
+    struct YrrpMatrixGl;
+    bool playYrrpBootAnimation();
+    const char* initYrrpMatrix(YrrpMatrixGl* gl);
+    void releaseYrrpMatrix(YrrpMatrixGl* gl);
+    void runYrrpMatrix(const YrrpMatrixGl& gl, yrrp::MatrixStatus* status);
     status_t initDisplaysAndSurfaces();
     bool movie();
     void drawText(const char* str, const Font& font, bool bold,
