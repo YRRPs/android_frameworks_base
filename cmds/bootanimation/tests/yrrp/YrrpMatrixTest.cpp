@@ -177,6 +177,15 @@ TEST(YrrpMatrixStatusTest, defaultMatrixRunPublishesEveryGate) {
     EXPECT_EQ(0u, map.count("sys.yrrp.bootanim.result"));
 }
 
+TEST(YrrpMatrixStatusTest, configValueMatchesThePublishedConfig) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("lineage", "0");
+    status.shuttingDown = true;
+    status.propsReady = true;
+    status.route = MatrixRoute::Exit;
+    EXPECT_EQ(asMap(status).at("sys.yrrp.bootanim.config"), configValue(status));
+}
+
 TEST(YrrpMatrixStatusTest, initFailureNamesTheBlockingStage) {
     MatrixStatus status;
     status.config = parseMatrixConfig("matrix", "false");

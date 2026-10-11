@@ -112,6 +112,8 @@ cc_test {
     cflags: [
         "-Wall",
         "-Werror",
+        "-Wunused",
+        "-Wunreachable-code",
     ],
     test_suites: ["general-tests"],
 }

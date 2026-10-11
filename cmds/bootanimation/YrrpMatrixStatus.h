@@ -27,6 +27,9 @@ struct MatrixStatus {
     double maxFrameMs = 0.0;
 };
 
+// The sys.yrrp.bootanim.config value, also logged once per run.
+std::string configValue(const MatrixStatus& status);
+
 std::vector<std::pair<std::string, std::string>> statusProperties(const MatrixStatus& status);
 
 }  // namespace android::yrrp

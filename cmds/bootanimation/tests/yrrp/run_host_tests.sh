@@ -15,7 +15,7 @@ for unit in YrrpMatrixConfig YrrpMatrixTimeline YrrpMatrixStatus; do
     fi
 done
 
-g++ -std=c++17 -Wall -Werror -I"${src}" "${units[@]}" "${here}/YrrpMatrixTest.cpp" \
+g++ -std=c++17 -Wall -Werror -Wunused -Wunreachable-code -I"${src}" "${units[@]}" "${here}/YrrpMatrixTest.cpp" \
     -lgtest -lgtest_main -pthread -o "${out}/tests"
 "${out}/tests"
 

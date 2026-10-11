@@ -8,7 +8,6 @@
 #include <cstdio>
 
 namespace android::yrrp {
-namespace {
 
 std::string configValue(const MatrixStatus& status) {
     char buffer[92];
@@ -19,6 +18,8 @@ std::string configValue(const MatrixStatus& status) {
              status.propsReady ? 1 : 0);
     return buffer;
 }
+
+namespace {
 
 std::string resultValue(const MatrixStatus& status) {
     char buffer[92];

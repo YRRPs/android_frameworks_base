@@ -83,11 +83,7 @@ bool BootAnimation::playYrrpBootAnimation() {
     status.shuttingDown = mShuttingDown;
     status.propsReady = android::base::GetBoolProperty("ro.persistent_properties.ready", false);
     status.route = yrrp::routeFor(status.config.style, mShuttingDown);
-    for (const auto& [key, value] : yrrp::statusProperties(status)) {
-        if (key == "sys.yrrp.bootanim.config") {
-            ALOGI("config %s", value.c_str());
-        }
-    }
+    ALOGI("config %s", yrrp::configValue(status).c_str());
     if (status.route != yrrp::MatrixRoute::Matrix) {
         status.blockedBy = "STYLE_LINEAGE";
         publish(status);
@@ -118,6 +114,10 @@ bool BootAnimation::playYrrpBootAnimation() {
 }
 
 const char* BootAnimation::initYrrpMatrix(YrrpMatrixGl* gl) {
+    // Drop errors left by earlier GL work so the final check reports only ours.
+    // Bounded, so a context-loss error that keeps reporting cannot spin here.
+    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
+    }
     if (initTexture(&gl->atlas, mAssets, kAtlasAsset) != NO_ERROR) {
         return "ASSET_ATLAS";
     }
@@ -143,6 +143,9 @@ const char* BootAnimation::initYrrpMatrix(YrrpMatrixGl* gl) {
     GLint linked = GL_FALSE;
     glGetProgramiv(gl->program, GL_LINK_STATUS, &linked);
     if (linked != GL_TRUE) {
+        char infoLog[512] = {};
+        glGetProgramInfoLog(gl->program, sizeof(infoLog), nullptr, infoLog);
+        ALOGW("program link failed log=%s", infoLog);
         return "LINK";
     }
     gl->aPosition = glGetAttribLocation(gl->program, "aPosition");
