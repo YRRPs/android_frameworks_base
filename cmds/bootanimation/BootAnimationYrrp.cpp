@@ -83,6 +83,11 @@ bool BootAnimation::playYrrpBootAnimation() {
     status.shuttingDown = mShuttingDown;
     status.propsReady = android::base::GetBoolProperty("ro.persistent_properties.ready", false);
     status.route = yrrp::routeFor(status.config.style, mShuttingDown);
+    for (const auto& [key, value] : yrrp::statusProperties(status)) {
+        if (key == "sys.yrrp.bootanim.config") {
+            ALOGI("config %s", value.c_str());
+        }
+    }
     if (status.route != yrrp::MatrixRoute::Matrix) {
         status.blockedBy = "STYLE_LINEAGE";
         publish(status);
@@ -98,6 +103,12 @@ bool BootAnimation::playYrrpBootAnimation() {
         publish(status);
         ALOGW("init failed reason=%s fallback=%s", failure, yrrp::routeName(status.route));
         return status.route == yrrp::MatrixRoute::Exit;
+    }
+    if (mDisplays.empty()) {
+        ALOGI("init ok panel=none displays=0");
+    } else {
+        ALOGI("init ok panel=%dx%d displays=%zu", mDisplays.front().width, mDisplays.front().height,
+              mDisplays.size());
     }
     publish(status);
     runYrrpMatrix(gl, &status);
@@ -161,7 +172,6 @@ void BootAnimation::releaseYrrpMatrix(YrrpMatrixGl* gl) {
 void BootAnimation::runYrrpMatrix(const YrrpMatrixGl& gl, yrrp::MatrixStatus* status) {
     yrrp::MatrixTimeline timeline(status->config.fullIntro, mShuttingDown);
     yrrp::FrameStats stats;
-    ALOGI("start config fullIntro=%d shutdown=%d", status->config.fullIntro, mShuttingDown);
 
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
