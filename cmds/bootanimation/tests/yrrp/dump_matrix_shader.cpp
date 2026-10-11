@@ -15,6 +15,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     const bool vertex = strcmp(argv[1], "vert") == 0;
+    if (!vertex && strcmp(argv[1], "frag") != 0) {
+        return 2;
+    }
     printf("#version 100\n%s\n",
            vertex ? android::yrrp::kMatrixVertexShader : android::yrrp::kMatrixFragmentShader);
     return 0;

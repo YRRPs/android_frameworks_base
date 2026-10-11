@@ -16,6 +16,7 @@ void main() {
 // Katakana rain with a decoding YRRP mark. Every frame is a pure function of
 // u_time and u_exit. Cell geometry follows the panel's short side, so any
 // aspect ratio gets more cells, never stretched glyphs.
+// The renderer must pass u_res > 0 and u_logoAspect > 0 (logo height > 0).
 inline constexpr char kMatrixFragmentShader[] = R"(
 precision highp float;
 uniform sampler2D u_atlas;
@@ -33,7 +34,8 @@ float hash(vec2 q) {
 }
 
 float glyphAt(float col, float row, vec2 local, float rate) {
-    float tick = floor(u_time * rate + hash(vec2(row, col)) * 9.0);
+    // Wrapped so fp32 hash inputs stay small on long boots; identical below tick 2048.
+    float tick = mod(floor(u_time * rate + hash(vec2(row, col)) * 9.0), 2048.0);
     float idx = floor(hash(vec2(col * 1.3 + tick, row * 0.7 + tick * 0.13)) * 64.0);
     vec2 g = vec2(mod(idx, 8.0), floor(idx / 8.0));
     return texture2D(u_atlas, (g + local) / 8.0).r;
