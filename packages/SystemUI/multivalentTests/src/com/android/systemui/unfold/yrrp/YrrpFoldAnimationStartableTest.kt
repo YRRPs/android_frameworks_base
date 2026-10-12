@@ -59,6 +59,49 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
         }
 
     private var hingeSensor = true
+    private val foldLockState = MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
+    private val foldLockWrites = mutableListOf<Int>()
+    private val foldLockSettings =
+        object : FoldLockSettings {
+            override val state = foldLockState
+
+            override fun forceAlways(userId: Int): Boolean {
+                foldLockWrites += userId
+                foldLockState.value = foldLockState.value.copy(value = DuoFoldLockEnforcer.ALWAYS)
+                return true
+            }
+        }
+
+    @Test
+    fun supportedDevice_forcesFoldLockForDuo_andDumpsIt() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        foldLockState.value = FoldLockState(userId = 0, styleRaw = 2, value = "sleep_on_fold_key")
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+
+        assertThat(foldLockWrites).containsExactly(0)
+        val out = StringWriter()
+        underTest.dump(PrintWriter(out), emptyArray())
+        assertThat(out.toString()).contains("foldLockValue=stay_awake_on_fold_key")
+        assertThat(out.toString()).contains("foldLockForced=true")
+    }
+
+    @Test
+    fun unsupportedDevice_neverTouchesFoldLock() = runTest {
+        hingeSensor = false
+        whenever(repository.setting).thenReturn(raw)
+        foldLockState.value = FoldLockState(userId = 0, styleRaw = 2, value = "sleep_on_fold_key")
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+
+        assertThat(foldLockWrites).isEmpty()
+        val out = StringWriter()
+        underTest.dump(PrintWriter(out), emptyArray())
+        assertThat(out.toString()).contains("foldLockValue=null")
+        assertThat(out.toString()).contains("foldLockForced=false")
+    }
 
     @Test
     fun unsupportedDevice_registersDumpOnly_andKeepsStock() = runTest {
@@ -135,6 +178,8 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
                 "completions=0",
                 "cancellations=0",
                 "lastCancelReason=none",
+                "foldLockValue=",
+                "foldLockForced=",
             )
             .forEach { assertThat(text).contains(it) }
     }
@@ -246,5 +291,6 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
             powerInteractor = powerInteractor,
             backgroundScope = scope.backgroundScope,
             animationsEnabled = { animationsEnabled },
+            foldLockSettings = foldLockSettings,
         )
 }
