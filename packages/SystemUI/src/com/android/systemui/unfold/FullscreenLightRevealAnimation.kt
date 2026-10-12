@@ -152,6 +152,24 @@ constructor(
         scrimView?.revealAmount = revealAmount
     }
 
+    /**
+     * Blurs everything below the overlay window. Returns false when no overlay is attached or
+     * cross-window blur is unavailable (for example under Battery Saver).
+     */
+    fun setBackgroundBlurRadius(radiusPx: Int): Boolean {
+        ensureInBackground()
+        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
+        if (!surface.isValid) return false
+        if (
+            radiusPx > 0 &&
+                !context.getSystemService(WindowManager::class.java)!!.isCrossWindowBlurEnabled
+        ) {
+            return false
+        }
+        SurfaceControl.Transaction().setBackgroundBlurRadius(surface, radiusPx).apply()
+        return true
+    }
+
     private fun buildSurface(onUpdated: Consumer<SurfaceControl.Builder>) {
         val containerBuilder =
             SurfaceControl.Builder(SurfaceSession())

@@ -28,6 +28,7 @@ import com.android.systemui.unfold.domain.interactor.FoldableDisplaySwitchTracki
 import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManager
+import com.android.systemui.unfold.yrrp.DuoFoldOverlayAnimation
 import com.android.systemui.unfold.yrrp.YrrpFoldAnimationStartable
 import com.android.systemui.util.kotlin.getOrNull
 import dagger.Binds
@@ -140,6 +141,13 @@ abstract class SysUIUnfoldInternalModule {
     @SysUIUnfoldScope
     abstract fun bindsFoldLightRevealOverlayAnimation(
         anim: FoldLightRevealOverlayAnimation
+    ): FullscreenLightRevealAnimation
+
+    @Binds
+    @IntoSet
+    @SysUIUnfoldScope
+    abstract fun bindsDuoFoldOverlayAnimation(
+        anim: DuoFoldOverlayAnimation
     ): FullscreenLightRevealAnimation
 
     @Binds
