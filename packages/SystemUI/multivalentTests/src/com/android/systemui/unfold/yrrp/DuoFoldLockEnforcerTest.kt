@@ -124,7 +124,8 @@ class DuoFoldLockEnforcerTest : SysuiTestCase() {
 
     /** Holds one user's state; a successful force writes Always back into it, as Settings does. */
     private class FakeFoldLockSettings : FoldLockSettings {
-        override val state = MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
+        override val state =
+            MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
         val writes = mutableListOf<Int>()
         var failWrites = false
 

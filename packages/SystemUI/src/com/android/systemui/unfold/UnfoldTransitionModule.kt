@@ -43,6 +43,7 @@ import com.android.systemui.unfold.util.UnfoldOnlyProgressProvider
 import com.android.systemui.unfold.util.UnfoldTransitionATracePrefix
 import com.android.systemui.unfold.util.UnfoldTransitionStyleGate
 import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
+import com.android.systemui.unfold.yrrp.YRRP_AOSP_FOLD_REVEAL
 import com.android.systemui.util.time.SystemClock
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider
 import com.android.wm.shell.unfold.UnfoldAnimationStyleProvider
@@ -176,6 +177,11 @@ class UnfoldTransitionModule {
     @Singleton
     fun provideDisplaySwitchLatencyLogger(): DisplaySwitchLatencyLogger =
         DisplaySwitchLatencyLogger()
+
+    /** YRRP: keeps AOSP's fold light reveal off; see [FoldLightRevealOverlayAnimation.init]. */
+    @Provides
+    @Named(YRRP_AOSP_FOLD_REVEAL)
+    fun provideYrrpAospFoldRevealEnabled(): Boolean = false
 
     @Provides
     @Singleton

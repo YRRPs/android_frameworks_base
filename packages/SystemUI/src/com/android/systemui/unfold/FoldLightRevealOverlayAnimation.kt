@@ -39,9 +39,11 @@ import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Comp
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.yrrp.FoldAnimationStyle
 import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
+import com.android.systemui.unfold.yrrp.YRRP_AOSP_FOLD_REVEAL
 import com.android.systemui.util.animation.data.repository.AnimationStatusRepository
 import com.android.systemui.util.kotlin.race
 import javax.inject.Inject
+import javax.inject.Named
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -72,6 +74,7 @@ constructor(
     private val foldLockSettingAvailabilityProvider: FoldLockSettingAvailabilityProvider,
     private val interactionJankMonitor: InteractionJankMonitor,
     private val foldAnimationStyleSelector: FoldAnimationStyleSelector,
+    @Named(YRRP_AOSP_FOLD_REVEAL) private val aospFoldRevealEnabled: Boolean,
 ) : FullscreenLightRevealAnimation {
 
     private val revealProgressValueAnimator: ValueAnimator =
@@ -85,7 +88,12 @@ constructor(
     override fun init() {
         // This method will be called only on devices where this animation is enabled,
         // so normally this thread won't be created
-        if (!foldLockSettingAvailabilityProvider.isFoldLockBehaviorAvailable) {
+        // YRRP: the fold-lock gate is open on xueying for "Continue using apps on fold", but Pixel
+        // keeps the cover screen without AOSP's reveal, as before the gate opened.
+        if (
+            !aospFoldRevealEnabled ||
+                !foldLockSettingAvailabilityProvider.isFoldLockBehaviorAvailable
+        ) {
             return
         }
 

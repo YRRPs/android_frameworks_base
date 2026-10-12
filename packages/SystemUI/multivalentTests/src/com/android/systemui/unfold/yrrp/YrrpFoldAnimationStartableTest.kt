@@ -59,7 +59,8 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
         }
 
     private var hingeSensor = true
-    private val foldLockState = MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
+    private val foldLockState =
+        MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
     private val foldLockWrites = mutableListOf<Int>()
     private val foldLockSettings =
         object : FoldLockSettings {
