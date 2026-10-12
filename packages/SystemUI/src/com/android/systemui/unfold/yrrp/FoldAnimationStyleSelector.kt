@@ -25,9 +25,9 @@ import javax.inject.Singleton
 /**
  * Latches the user's fold animation style when the first gated progress provider starts a
  * transition (or a screen-on handshake calls [latchIfIdle] first) and releases it when the last
- * gated provider finishes, or by force through [releaseAll] on sleep or timeout. Every unfold consumer, Shell included,
- * reads [currentStyle], so one transition never mixes styles. Lives in the global graph because
- * Shell and the unfold library are both resolved there.
+ * gated provider finishes, or by force through [releaseAll] on sleep or timeout. Every unfold
+ * consumer, Shell included, reads [currentStyle], so one transition never mixes styles. Lives in
+ * the global graph because Shell and the unfold library are both resolved there.
  */
 @Singleton
 class FoldAnimationStyleSelector @Inject constructor() :

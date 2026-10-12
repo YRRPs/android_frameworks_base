@@ -48,6 +48,7 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.atLeastOnce
 import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -321,6 +322,28 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         progressProvider.onTransitionProgress(0.9f)
         processAll()
         verify(innerController, never()).isTouchBlocked = false
+    }
+
+    @Test
+    fun foldSleepThenUnfold_stillPlaysUnfold_andIsNotMistakenForFold() {
+        reportFolded(true)
+        isAsleep.value = true
+        processAll()
+        isAsleep.value = false
+        processAll()
+        reportFolded(false)
+
+        underTest.onScreenTurningOn {}
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+
+        progressProvider.onTransitionStarted()
+        processAll()
+
+        // No second, FOLDING attach for the real unfold.
+        verify(innerController, times(1)).addOverlay(any(), anyOrNull())
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
     }
 
     @Test

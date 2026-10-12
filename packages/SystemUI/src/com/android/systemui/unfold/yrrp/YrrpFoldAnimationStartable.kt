@@ -38,8 +38,9 @@ import kotlinx.coroutines.delay
 
 /**
  * Feeds the per-user setting into [FoldAnimationStyleSelector], logs latch transitions, releases a
- * stuck latch on sleep or after [LATCH_TIMEOUT_MS], and dumps every gate. Dump: `dumpsys activity service com.android.systemui/.SystemUIService
- * YrrpFoldAnimation YrrpFoldAnimationLog`.
+ * stuck latch on sleep or after [LATCH_TIMEOUT_MS], and dumps every gate. Dump:
+ * `dumpsys activity service com.android.systemui/.SystemUIService YrrpFoldAnimation
+ * YrrpFoldAnimationLog`.
  */
 @SysUISingleton
 class YrrpFoldAnimationStartable(

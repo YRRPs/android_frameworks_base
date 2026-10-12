@@ -249,8 +249,8 @@ constructor(
 
     private fun cancel(reason: String) {
         bgHandler.removeCallbacks(safetyTimeout)
-        // Pending flags belong to the interrupted cycle; a later wake must not replay them.
-        pendingUnfold = false
+        // A cover reveal does not survive an interruption such as sleep. pendingUnfold stays: the
+        // device is still folded and its unfold screen-on is still due.
         pendingCoverReveal = false
         coverAnimator?.cancel()
         coverWaitJob?.cancel()
@@ -314,8 +314,6 @@ constructor(
                     cancel("FOLDED")
                 } else if (!folded && runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
                     cancel("UNFOLDED")
-                    // The unfold this cancel interrupts is real, so its screen-on is still due.
-                    pendingUnfold = true
                 } else if (folded) {
                     bgHandler.removeCallbacks(safetyTimeout)
                     inner.ensureOverlayRemoved()
