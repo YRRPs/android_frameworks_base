@@ -173,9 +173,14 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
 
     @Override
     public void resetSurface(TaskInfo taskInfo, Transaction transaction) {
+        final boolean isHome = taskInfo.getActivityType() == ACTIVITY_TYPE_HOME;
         final AnimationContext context = contextsFor(taskInfo).get(taskInfo.taskId);
         if (context != null) {
-            resetSurface(context, transaction);
+            if (isHome) {
+                resetHomeSurface(context, transaction);
+            } else {
+                resetSurface(context, transaction);
+            }
         }
     }
 
@@ -210,6 +215,7 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
         final float scaleX = DuoUnfoldGeometry.scaleX(progress);
         for (int i = contexts.size() - 1; i >= 0; i--) {
             final AnimationContext context = contexts.valueAt(i);
+            context.mDuoTransformed = true;
             context.mCurrentCropRect.set(context.mEndCropRect);
             context.mMatrix.setScale(scaleX, 1f, context.mCurrentCropRect.exactCenterX(),
                     context.mCurrentCropRect.exactCenterY());
@@ -245,8 +251,15 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
             resetSurface(context, transaction);
         }
         for (int i = mHomeContextByTaskId.size() - 1; i >= 0; i--) {
-            resetSurface(mHomeContextByTaskId.valueAt(i), transaction);
+            resetHomeSurface(mHomeContextByTaskId.valueAt(i), transaction);
         }
+    }
+
+    /** Resets a home leash only if Duo transformed it, as other styles never touch home. */
+    private void resetHomeSurface(AnimationContext context, Transaction transaction) {
+        if (!context.mDuoTransformed) return;
+        context.mDuoTransformed = false;
+        resetSurface(context, transaction);
     }
 
     private void resetSurface(AnimationContext context, Transaction transaction) {
@@ -267,6 +280,8 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
         final Matrix mMatrix = new Matrix();
 
         TaskInfo mTaskInfo;
+        // Set when Duo transformed this leash, so a later reset is needed.
+        boolean mDuoTransformed;
 
         private AnimationContext(SurfaceControl leash, InsetsSource taskBarInsetsSource,
                 TaskInfo taskInfo) {

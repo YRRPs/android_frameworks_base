@@ -90,11 +90,18 @@ public class FullscreenUnfoldTaskAnimatorDuoTest {
     @Test
     public void pixel_doesNotTouchHomeTask() {
         SurfaceControl leash = mock(SurfaceControl.class);
-        mAnimator.onTaskAppeared(task(1, ACTIVITY_TYPE_HOME), leash);
+        ActivityManager.RunningTaskInfo home = task(1, ACTIVITY_TYPE_HOME);
+        mAnimator.onTaskAppeared(home, leash);
 
         mAnimator.applyAnimationProgress(0.3f, mTransaction);
+        mAnimator.resetAllSurfaces(mTransaction);
+        mAnimator.resetSurface(home, mTransaction);
 
         verify(mTransaction, never()).setMatrix(eq(leash), any(Matrix.class), any());
+        verify(mTransaction, never()).setMatrix(eq(leash), anyFloat(), anyFloat(), anyFloat(),
+                anyFloat());
+        verify(mTransaction, never()).setWindowCrop(eq(leash), any());
+        verify(mTransaction, never()).setPosition(eq(leash), anyFloat(), anyFloat());
     }
 
     @Test
@@ -120,6 +127,7 @@ public class FullscreenUnfoldTaskAnimatorDuoTest {
         SurfaceControl leash = mock(SurfaceControl.class);
         ActivityManager.RunningTaskInfo home = task(1, ACTIVITY_TYPE_HOME);
         mAnimator.onTaskAppeared(home, leash);
+        mAnimator.applyAnimationProgress(0f, mTransaction);
 
         mAnimator.resetSurface(home, mTransaction);
 
