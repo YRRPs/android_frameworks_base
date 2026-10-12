@@ -104,7 +104,7 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         testableLooper.processAllMessages()
 
         verify(onOverlayReady).run()
-        verify(controller, never()).addOverlay(any(), anyOrNull())
+        verify(controller, never()).addOverlay(any(), anyOrNull(), any())
     }
 
     @Test
@@ -116,7 +116,7 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         testableLooper.processAllMessages()
 
         verify(onOverlayReady).run()
-        verify(controller, never()).addOverlay(any(), anyOrNull())
+        verify(controller, never()).addOverlay(any(), anyOrNull(), any())
     }
 
     @Test
@@ -127,7 +127,7 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn(onOverlayReady)
         testableLooper.processAllMessages()
 
-        verify(controller).addOverlay(any(), eq(onOverlayReady))
+        verify(controller).addOverlay(any(), eq(onOverlayReady), eq(0))
     }
 
     @Test
@@ -142,7 +142,7 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn(onOverlayReady)
         testableLooper.processAllMessages()
 
-        verify(controller, never()).addOverlay(any(), anyOrNull())
+        verify(controller, never()).addOverlay(any(), anyOrNull(), any())
         verify(onOverlayReady, times(2)).run()
     }
 
@@ -157,7 +157,7 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn(onOverlayReady)
         testableLooper.processAllMessages()
 
-        verify(controller, never()).addOverlay(any(), anyOrNull())
+        verify(controller, never()).addOverlay(any(), anyOrNull(), any())
     }
 
     @Test

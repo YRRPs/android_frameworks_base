@@ -91,6 +91,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         )
         whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(true)
         whenever(coverController.setBackgroundBlurRadius(any())).thenReturn(true)
+        whenever(innerController.isBlurAvailable()).thenReturn(true)
+        whenever(coverController.isBlurAvailable()).thenReturn(true)
         whenever(factory.create(any(), any(), any()))
             .thenReturn(innerController)
             .thenReturn(coverController)
@@ -114,8 +116,10 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn { ready.countDown() }
         processAll()
 
-        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
-        verify(innerController).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+        verify(innerController)
+            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.MAX_BLUR_PX))
+        verify(innerController, never()).setBackgroundBlurRadius(any())
+        assertThat(runtime.blurAvailable).isTrue()
         progressProvider.onTransitionStarted()
         progressProvider.onTransitionProgress(0.9f)
         processAll()
@@ -143,7 +147,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(selector.starts).isEqualTo(1)
         selector.onGatedTransitionStarted(progressProvider)
         assertThat(selector.starts).isEqualTo(1)
-        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), any())
     }
 
     @Test
@@ -157,8 +161,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
 
         assertThat(ready.await(1, TimeUnit.SECONDS)).isTrue()
-        verify(innerController, never()).addOverlay(any(), anyOrNull())
-        verify(coverController, never()).addOverlay(any(), anyOrNull())
+        verify(innerController, never()).addOverlay(any(), anyOrNull(), any())
+        verify(coverController, never()).addOverlay(any(), anyOrNull(), any())
     }
 
     @Test
@@ -178,6 +182,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
     @Test
     fun blurRefused_marksBlurUnavailable_thenRetriesOnProgress() {
+        whenever(innerController.isBlurAvailable()).thenReturn(false)
         whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(false)
         reportFolded(true)
         reportFolded(false)
@@ -186,7 +191,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
 
         assertThat(runtime.blurAvailable).isFalse()
-        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), any())
 
         whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(true)
         progressProvider.onTransitionProgress(0.5f)
@@ -199,10 +204,10 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     @Test
     fun attachFailure_reportsReadyExactlyOnce() {
         var readyCount = 0
-        whenever(innerController.addOverlay(any(), anyOrNull())).thenAnswer {
+        whenever(innerController.addOverlay(any(), anyOrNull(), any())).thenAnswer {
             (it.arguments[1] as Runnable).run()
         }
-        whenever(innerController.setBackgroundBlurRadius(any())).thenThrow(RuntimeException())
+        whenever(innerController.isBlurAvailable()).thenThrow(RuntimeException())
         reportFolded(true)
         reportFolded(false)
 
@@ -267,8 +272,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn { ready.countDown() }
         processAll()
 
-        verify(coverController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
-        verify(coverController).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+        verify(coverController)
+            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.MAX_BLUR_PX))
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_REVEAL)
 
         underTest.onCoverScreenOn() // test hook = what the SCREEN_ON collector calls
@@ -317,7 +322,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         progressProvider.onTransitionStarted()
         processAll()
 
-        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), any())
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.FOLDING)
         progressProvider.onTransitionProgress(0.9f)
         processAll()
@@ -336,13 +341,13 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         underTest.onScreenTurningOn {}
         processAll()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
-        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), any())
 
         progressProvider.onTransitionStarted()
         processAll()
 
         // No second, FOLDING attach for the real unfold.
-        verify(innerController, times(1)).addOverlay(any(), anyOrNull())
+        verify(innerController, times(1)).addOverlay(any(), anyOrNull(), any())
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
     }
 
@@ -353,7 +358,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         progressProvider.onTransitionStarted()
         processAll()
 
-        verify(innerController).setBackgroundBlurRadius(DuoBlurCurve.radiusFor(1f))
+        verify(innerController)
+            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.radiusFor(1f)))
         verify(innerController, never()).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
     }
 
@@ -416,7 +422,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
 
         assertThat(ready).isTrue()
-        verify(coverController, never()).addOverlay(any(), anyOrNull())
+        verify(coverController, never()).addOverlay(any(), anyOrNull(), any())
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
     }
 

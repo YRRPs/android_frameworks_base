@@ -166,8 +166,9 @@ constructor(
             if (reported.compareAndSet(false, true)) onOverlayReady.run()
         }
         try {
-            controller.addOverlay(ALPHA_TRANSPARENT, readyOnce)
-            runtimeState.blurAvailable = controller.setBackgroundBlurRadius(initialBlurPx)
+            // The blur rides in the overlay's first committed frame, before ready is reported.
+            controller.addOverlay(ALPHA_TRANSPARENT, readyOnce, initialBlurPx)
+            runtimeState.blurAvailable = initialBlurPx == 0 || controller.isBlurAvailable()
             runtimeState.overlayAttached = true
             runtimeState.phase = phase
             armSafetyTimeout(phase)
