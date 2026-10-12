@@ -35,7 +35,9 @@ import com.android.systemui.unfold.util.ATraceLoggerTransitionProgressListener
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManager
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManagerImpl
+import com.android.systemui.unfold.util.StyleGatedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityProvider
+import com.android.systemui.unfold.util.UnfoldTransitionStyleGate
 import dagger.BindsOptionalOf
 import dagger.Module
 import dagger.Provides
@@ -76,6 +78,9 @@ abstract class UnfoldFlagsModule {
      * background events in the main handler).
      */
     @BindsOptionalOf @UnfoldBgProgressFlag abstract fun unfoldBgProgressFlag(): Boolean
+
+    /** Optional per-transition style gate; SystemUI binds the YRRP fold animation selector. */
+    @BindsOptionalOf abstract fun unfoldTransitionStyleGate(): UnfoldTransitionStyleGate
 }
 
 /**
@@ -100,6 +105,7 @@ internal class UnfoldSharedInternalModule {
             MainThreadUnfoldTransitionProgressProvider.Factory,
         @UnfoldBg bgProvider: Provider<Optional<UnfoldTransitionProgressProvider>>,
         @UnfoldBgProgressFlag unfoldBgProgressFlag: Optional<Boolean>,
+        styleGate: Optional<UnfoldTransitionStyleGate>,
     ): Optional<UnfoldTransitionProgressProvider> {
         if (unfoldBgProgressFlag.getOrDefault(false)) {
             // In this case, we wrap the background progress provider
@@ -122,6 +128,7 @@ internal class UnfoldSharedInternalModule {
                 fixedTimingTransitionProgressProvider = fixedTimingTransitionProgressProvider,
                 foldStateProvider = foldStateProvider,
                 progressHandler = mainHandler,
+                styleGate = styleGate,
             )
         }
     }
@@ -138,6 +145,7 @@ internal class UnfoldSharedInternalModule {
         fixedTimingTransitionProgressProvider: Provider<FixedTimingTransitionProgressProvider>,
         @UnfoldBg bgFoldStateProvider: FoldStateProvider,
         @UnfoldBg bgHandler: Handler,
+        styleGate: Optional<UnfoldTransitionStyleGate>,
     ): Optional<UnfoldTransitionProgressProvider> {
         return createOptionalUnfoldTransitionProgressProvider(
             config = config,
@@ -148,6 +156,7 @@ internal class UnfoldSharedInternalModule {
             fixedTimingTransitionProgressProvider = fixedTimingTransitionProgressProvider,
             foldStateProvider = bgFoldStateProvider,
             progressHandler = bgHandler,
+            styleGate = styleGate,
         )
     }
 
@@ -160,6 +169,7 @@ internal class UnfoldSharedInternalModule {
         fixedTimingTransitionProgressProvider: Provider<FixedTimingTransitionProgressProvider>,
         foldStateProvider: FoldStateProvider,
         progressHandler: Handler,
+        styleGate: Optional<UnfoldTransitionStyleGate>,
     ): Optional<UnfoldTransitionProgressProvider> {
         if (!config.isEnabled) {
             return Optional.empty()
@@ -174,11 +184,17 @@ internal class UnfoldSharedInternalModule {
                 fixedTimingTransitionProgressProvider.get()
             }
 
-        return Optional.of(
+        val scaleAware =
             scaleAwareProviderFactory.wrap(baseProgressProvider).apply {
                 // Always present callback that logs animation beginning and end.
                 addCallback(tracingListener)
             }
+        return Optional.of(
+            styleGate
+                .map<UnfoldTransitionProgressProvider> {
+                    StyleGatedUnfoldTransitionProgressProvider(scaleAware, it)
+                }
+                .orElse(scaleAware)
         )
     }
 
