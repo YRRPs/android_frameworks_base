@@ -41,8 +41,11 @@ import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldOnlyProgressProvider
 import com.android.systemui.unfold.util.UnfoldTransitionATracePrefix
+import com.android.systemui.unfold.util.UnfoldTransitionStyleGate
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.util.time.SystemClock
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider
+import com.android.wm.shell.unfold.UnfoldAnimationStyleProvider
 import dagger.Binds
 import dagger.Lazy
 import dagger.Module
@@ -185,6 +188,10 @@ class UnfoldTransitionModule {
         @Binds fun bindRepository(impl: UnfoldTransitionRepositoryImpl): UnfoldTransitionRepository
 
         @Binds fun bindFoldStateRepository(impl: FoldStateRepositoryImpl): FoldStateRepository
+
+        @Binds fun bindStyleGate(impl: FoldAnimationStyleSelector): UnfoldTransitionStyleGate
+
+        @Binds fun bindShellStyle(impl: FoldAnimationStyleSelector): UnfoldAnimationStyleProvider
     }
 
     @Module
