@@ -122,6 +122,35 @@ public class FullscreenUnfoldTaskAnimatorDuoTest {
     }
 
     @Test
+    public void duo_startTransaction_squeezesBeforeFirstProgress() {
+        mStyle = UnfoldAnimationStyleProvider.STYLE_DUO;
+        SurfaceControl app = mock(SurfaceControl.class);
+        SurfaceControl home = mock(SurfaceControl.class);
+        mAnimator.onTaskAppeared(task(1, ACTIVITY_TYPE_STANDARD), app);
+        mAnimator.onTaskAppeared(task(2, ACTIVITY_TYPE_HOME), home);
+
+        mAnimator.prepareStartTransaction(mTransaction);
+
+        for (SurfaceControl leash : new SurfaceControl[] {app, home}) {
+            ArgumentCaptor<Matrix> matrix = ArgumentCaptor.forClass(Matrix.class);
+            verify(mTransaction).setMatrix(eq(leash), matrix.capture(), any());
+            float[] values = new float[9];
+            matrix.getValue().getValues(values);
+            assertThat(values[Matrix.MSCALE_X]).isWithin(1e-4f).of(DuoUnfoldGeometry.scaleX(0f));
+        }
+    }
+
+    @Test
+    public void pixel_startTransaction_leavesTasksUntransformed() {
+        SurfaceControl app = mock(SurfaceControl.class);
+        mAnimator.onTaskAppeared(task(1, ACTIVITY_TYPE_STANDARD), app);
+
+        mAnimator.prepareStartTransaction(mTransaction);
+
+        verify(mTransaction, never()).setMatrix(eq(app), any(Matrix.class), any());
+    }
+
+    @Test
     public void duo_resetSurface_restoresIdentityForHome() {
         mStyle = UnfoldAnimationStyleProvider.STYLE_DUO;
         SurfaceControl leash = mock(SurfaceControl.class);

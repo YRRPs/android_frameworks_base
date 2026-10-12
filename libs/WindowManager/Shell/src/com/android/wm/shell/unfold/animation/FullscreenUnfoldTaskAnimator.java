@@ -230,6 +230,12 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
     @Override
     public void prepareStartTransaction(Transaction transaction) {
         mBackgroundController.ensureBackground(transaction);
+        // Duo: the first unfolded frame must already be squeezed. The overlay above is
+        // transparent, so nothing hides a full-width frame before the first progress arrives.
+        if (isDuo()) {
+            applyDuo(mAnimationContextByTaskId, 0f, transaction);
+            applyDuo(mHomeContextByTaskId, 0f, transaction);
+        }
     }
 
     @Override
