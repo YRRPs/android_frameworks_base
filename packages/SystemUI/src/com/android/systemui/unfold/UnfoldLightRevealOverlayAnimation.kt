@@ -110,6 +110,9 @@ constructor(
                     isUnfoldHandled = true
                 } else {
                     // No unfold transition, immediately report that overlay is ready
+                    // This screen-on consumed the unfold whatever the style, so a later switch to
+                    // Pixel cannot add an opaque overlay no transition will remove.
+                    if (!isFolded) isUnfoldHandled = true
                     controller.ensureOverlayRemoved()
                     onOverlayReady.run()
                 }

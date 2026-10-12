@@ -36,6 +36,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -126,6 +127,36 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         testableLooper.processAllMessages()
 
         verify(controller).addOverlay(any(), eq(onOverlayReady))
+    }
+
+    @Test
+    fun stockUnfold_thenSwitchToPixel_nextScreenOnAddsNoOverlay() {
+        selector.onSettingChanged(FoldAnimationStyle.STOCK)
+        unfoldAfterFold()
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+
+        // Lock and wake after the user switched to Pixel: the unfold was already handled.
+        selector.onSettingChanged(FoldAnimationStyle.PIXEL)
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+
+        verify(controller, never()).addOverlay(any(), anyOrNull())
+        verify(onOverlayReady, times(2)).run()
+    }
+
+    @Test
+    fun duoUnfold_thenSwitchToPixel_nextScreenOnAddsNoOverlay() {
+        selector.onSettingChanged(FoldAnimationStyle.DUO)
+        unfoldAfterFold()
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+
+        selector.onSettingChanged(FoldAnimationStyle.PIXEL)
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+
+        verify(controller, never()).addOverlay(any(), anyOrNull())
     }
 
     private fun unfoldAfterFold() {
