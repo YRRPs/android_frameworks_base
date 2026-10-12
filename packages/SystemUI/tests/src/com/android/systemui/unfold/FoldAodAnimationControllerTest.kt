@@ -33,11 +33,14 @@ import com.android.systemui.shade.ShadeViewController
 import com.android.systemui.statusbar.LightRevealScrim
 import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.unfold.util.FoldableDeviceStates
+import com.android.systemui.unfold.yrrp.FoldAnimationStyle
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.unfold.util.FoldableTestUtils
 import com.android.systemui.util.concurrency.FakeExecutor
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.settings.GlobalSettings
 import com.android.systemui.util.time.FakeSystemClock
+import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -47,6 +50,8 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.Captor
 import org.mockito.Mock
+import org.mockito.Mockito.anyFloat
+import org.mockito.Mockito.anyString
 import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.verify
@@ -84,6 +89,8 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
 
     lateinit var underTest: FoldAodAnimationController
     private val fakeExecutor = FakeExecutor(FakeSystemClock())
+    private val styleSelector =
+        FoldAnimationStyleSelector().apply { onSettingChanged(FoldAnimationStyle.PIXEL) }
 
     @Before
     fun setup() {
@@ -116,6 +123,7 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
                         latencyTracker,
                         { keyguardInteractor },
                         { foldTransitionInteractor },
+                        styleSelector,
                     )
                     .apply { initialize(centralSurfaces, shadeViewController, lightRevealScrim) }
 
@@ -203,6 +211,40 @@ class FoldAodAnimationControllerTest : SysuiTestCase() {
 
             verify(latencyTracker).onActionStart(any())
             verify(latencyTracker).onActionCancel(any())
+        }
+
+    @Test
+    fun onFolded_stockStyle_dozing_doesNotPrepareAnimation() =
+        runBlocking(IMMEDIATE) {
+            styleSelector.onSettingChanged(FoldAnimationStyle.STOCK)
+            keyguardRepository.setIsDozing(true)
+            setAodEnabled(enabled = true)
+
+            fold()
+            simulateScreenTurningOn()
+
+            verify(shadeFoldAnimator, never()).prepareFoldToAodAnimation()
+            verifyNoMoreInteractions(latencyTracker)
+        }
+
+    @Test
+    fun startAnimation_stockStyle_returnsFalse() =
+        runBlocking(IMMEDIATE) {
+            whenever(globalSettings.getFloat(anyString(), anyFloat())).thenReturn(1f)
+            styleSelector.onSettingChanged(FoldAnimationStyle.STOCK)
+
+            assertThat(underTest.startAnimation()).isFalse()
+            verify(shadeFoldAnimator, never()).prepareFoldToAodAnimation()
+        }
+
+    @Test
+    fun startAnimation_duoStyle_prepares() =
+        runBlocking(IMMEDIATE) {
+            whenever(globalSettings.getFloat(anyString(), anyFloat())).thenReturn(1f)
+            styleSelector.onSettingChanged(FoldAnimationStyle.DUO)
+
+            assertThat(underTest.startAnimation()).isTrue()
+            verify(shadeFoldAnimator).prepareFoldToAodAnimation()
         }
 
     private fun simulateScreenTurningOn() {

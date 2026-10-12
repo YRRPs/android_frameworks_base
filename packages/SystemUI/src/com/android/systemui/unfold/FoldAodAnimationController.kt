@@ -33,6 +33,8 @@ import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.statusbar.phone.ScreenOffAnimation
 import com.android.systemui.statusbar.policy.CallbackController
 import com.android.systemui.unfold.FoldAodAnimationController.FoldAodAnimationStatus
+import com.android.systemui.unfold.yrrp.FoldAnimationStyle
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.util.concurrency.DelayableExecutor
 import com.android.systemui.util.settings.GlobalSettings
 import dagger.Lazy
@@ -55,6 +57,7 @@ constructor(
     private val latencyTracker: LatencyTracker,
     private val keyguardInteractor: Lazy<KeyguardInteractor>,
     private val foldTransitionInteractor: Lazy<ToAodFoldTransitionInteractor>,
+    private val foldAnimationStyleSelector: FoldAnimationStyleSelector,
 ) : CallbackController<FoldAodAnimationStatus>, ScreenOffAnimation, WakefulnessLifecycle.Observer {
 
     private lateinit var shadeViewController: ShadeViewController
@@ -96,8 +99,13 @@ constructor(
     /** Returns true if we should run fold to AOD animation */
     override fun shouldPlayAnimation(): Boolean = shouldPlayAnimation
 
+    // YRRP: Stock keeps the pre-unfold-framework behavior, so no fold-to-AOD animation either.
+    private fun isStockStyle(): Boolean =
+        foldAnimationStyleSelector.currentStyle() == FoldAnimationStyle.STOCK
+
     private fun shouldStartAnimation(): Boolean =
-        alwaysOnEnabled &&
+        !isStockStyle() &&
+            alwaysOnEnabled &&
             wakefulnessLifecycle.lastSleepReason == PowerManager.GO_TO_SLEEP_REASON_DEVICE_FOLD &&
             globalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
 
@@ -150,7 +158,8 @@ constructor(
                     pendingScrimReadyCallback = onReady
                 }
             } else if (
-                isFolded &&
+                !isStockStyle() &&
+                    isFolded &&
                     !isFoldHandled &&
                     alwaysOnEnabled &&
                     keyguardInteractor.get().isDozing.value
