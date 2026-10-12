@@ -123,6 +123,7 @@ constructor(
     fun addOverlay(
         initialAlpha: Float,
         onOverlayReady: Runnable? = null,
+        initialBlurPx: Int = 0,
     ) {
         if (!::wwm.isInitialized) {
             // Surface overlay is not created yet on the first SysUI launch
@@ -131,7 +132,7 @@ constructor(
         }
         ensureInBackground()
         ensureOverlayRemoved()
-        prepareOverlay(onOverlayReady, wwm, bgExecutor, initialAlpha)
+        prepareOverlay(onOverlayReady, wwm, bgExecutor, initialAlpha, initialBlurPx)
     }
 
     fun ensureOverlayRemoved() {
@@ -152,6 +153,23 @@ constructor(
         scrimView?.revealAmount = revealAmount
     }
 
+    /**
+     * Blurs everything below the overlay window. Returns false when no overlay is attached or
+     * cross-window blur is unavailable (for example under Battery Saver).
+     */
+    fun setBackgroundBlurRadius(radiusPx: Int): Boolean {
+        ensureInBackground()
+        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
+        if (!surface.isValid) return false
+        if (radiusPx > 0 && !isBlurAvailable()) return false
+        SurfaceControl.Transaction().setBackgroundBlurRadius(surface, radiusPx).apply()
+        return true
+    }
+
+    /** Whether cross-window blur is on now; Battery Saver and thermal limits turn it off. */
+    fun isBlurAvailable(): Boolean =
+        context.getSystemService(WindowManager::class.java)!!.isCrossWindowBlurEnabled
+
     private fun buildSurface(onUpdated: Consumer<SurfaceControl.Builder>) {
         val containerBuilder =
             SurfaceControl.Builder(SurfaceSession())
@@ -168,6 +186,7 @@ constructor(
         wwm: WindowlessWindowManager,
         bgExecutor: Executor,
         initialAlpha: Float,
+        initialBlurPx: Int = 0,
     ) {
         val newRoot = SurfaceControlViewHost(context, context.display, wwm, javaClass.simpleName)
 
@@ -191,6 +210,12 @@ constructor(
 
             newRoot.relayout(params) { transaction ->
                 val vsyncId = Choreographer.getSfInstance().vsyncId
+                // YRRP: blur in the same transaction as the first frame, so the overlay is never
+                // presented unblurred. The surface is valid once the first frame is drawn.
+                val surface = newView.viewRootImpl?.surfaceControl
+                if (initialBlurPx > 0 && surface?.isValid == true && isBlurAvailable()) {
+                    transaction.setBackgroundBlurRadius(surface, initialBlurPx)
+                }
                 transaction.setFrameTimelineVsync(vsyncId).apply()
 
                 transaction

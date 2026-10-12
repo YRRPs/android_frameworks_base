@@ -199,6 +199,7 @@ import com.android.wm.shell.transition.MixedTransitionHandler;
 import com.android.wm.shell.transition.Transitions;
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider;
 import com.android.wm.shell.unfold.UnfoldAnimationController;
+import com.android.wm.shell.unfold.UnfoldAnimationStyleProvider;
 import com.android.wm.shell.unfold.UnfoldBackgroundController;
 import com.android.wm.shell.unfold.UnfoldTransitionHandler;
 import com.android.wm.shell.unfold.animation.FullscreenUnfoldTaskAnimator;
@@ -837,9 +838,11 @@ public abstract class WMShellModule {
             Context context,
             UnfoldBackgroundController unfoldBackgroundController,
             ShellController shellController,
-            DisplayInsetsController displayInsetsController) {
+            DisplayInsetsController displayInsetsController,
+            Optional<UnfoldAnimationStyleProvider> styleProvider) {
         return new FullscreenUnfoldTaskAnimator(
-                context, unfoldBackgroundController, shellController, displayInsetsController);
+                context, unfoldBackgroundController, shellController, displayInsetsController,
+                styleProvider);
     }
 
     @Provides
@@ -887,7 +890,8 @@ public abstract class WMShellModule {
             @ShellMainThread ShellExecutor executor,
             @ShellMainThread Handler handler,
             ShellInit shellInit,
-            Optional<BubbleTaskUnfoldTransitionMerger> bubbleTaskUnfoldTransitionMerger) {
+            Optional<BubbleTaskUnfoldTransitionMerger> bubbleTaskUnfoldTransitionMerger,
+            Optional<UnfoldAnimationStyleProvider> styleProvider) {
         return new UnfoldTransitionHandler(
                 shellInit,
                 progressProvider.get(),
@@ -897,7 +901,8 @@ public abstract class WMShellModule {
                 executor,
                 handler,
                 transitions,
-                bubbleTaskUnfoldTransitionMerger);
+                bubbleTaskUnfoldTransitionMerger,
+                styleProvider);
     }
 
     @WMSingleton

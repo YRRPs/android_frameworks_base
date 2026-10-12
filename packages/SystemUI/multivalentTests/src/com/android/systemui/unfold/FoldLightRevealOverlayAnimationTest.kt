@@ -36,6 +36,8 @@ import com.android.systemui.power.domain.interactor.powerInteractor
 import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.statusbar.LightRevealScrim
 import com.android.systemui.testKosmos
+import com.android.systemui.unfold.yrrp.FoldAnimationStyle
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.util.animation.data.repository.fakeAnimationStatusRepository
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -94,6 +96,7 @@ class FoldLightRevealOverlayAnimationTest : SysuiTestCase() {
                 mockControllerFactory,
                 mockFoldLockSettingAvailabilityProvider,
                 mockJankMonitor,
+                FoldAnimationStyleSelector().apply { onSettingChanged(FoldAnimationStyle.PIXEL) },
             )
         foldLightRevealAnimation.init()
     }

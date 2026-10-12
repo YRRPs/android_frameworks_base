@@ -33,6 +33,8 @@ import com.android.systemui.unfold.UnfoldLightRevealOverlayAnimation.AddOverlayR
 import com.android.systemui.unfold.UnfoldLightRevealOverlayAnimation.AddOverlayReason.UNFOLD
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
+import com.android.systemui.unfold.yrrp.FoldAnimationStyle
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.util.concurrency.ThreadFactory
 import java.util.concurrent.Executor
 import java.util.function.Consumer
@@ -53,7 +55,8 @@ constructor(
     private val deviceStateManager: DeviceStateManager,
     private val threadFactory: ThreadFactory,
     private val fullscreenLightRevealAnimationControllerFactory:
-        FullscreenLightRevealAnimationController.Factory
+        FullscreenLightRevealAnimationController.Factory,
+    private val foldAnimationStyleSelector: FoldAnimationStyleSelector,
 ) : FullscreenLightRevealAnimation {
 
     private val transitionListener = TransitionListener()
@@ -96,12 +99,20 @@ constructor(
             Trace.beginSection("$TAG#onScreenTurningOn")
             try {
                 // Add the view only if we are unfolding and this is the first screen on
-                if (!isFolded && !isUnfoldHandled && contentResolver.areAnimationsEnabled()) {
+                val unfoldPending =
+                    !isFolded && !isUnfoldHandled && contentResolver.areAnimationsEnabled()
+                // Latch before reading the style so this overlay and the gated transition that
+                // follows agree on it.
+                if (unfoldPending) foldAnimationStyleSelector.latchIfIdle()
+                if (unfoldPending && isPixel()) {
                     overlayAddReason = UNFOLD
                     controller.addOverlay(calculateRevealAmount(), onOverlayReady)
                     isUnfoldHandled = true
                 } else {
                     // No unfold transition, immediately report that overlay is ready
+                    // This screen-on consumed the unfold whatever the style, so a later switch to
+                    // Pixel cannot add an opaque overlay no transition will remove.
+                    if (!isFolded) isUnfoldHandled = true
                     controller.ensureOverlayRemoved()
                     onOverlayReady.run()
                 }
@@ -110,6 +121,8 @@ constructor(
             }
         }
     }
+
+    private fun isPixel() = foldAnimationStyleSelector.currentStyle() == FoldAnimationStyle.PIXEL
 
     private fun calculateRevealAmount(animationProgress: Float? = null): Float {
         val overlayAddReason = overlayAddReason
@@ -154,7 +167,7 @@ constructor(
 
         override fun onTransitionStarted() {
             // Add view for folding case (when unfolding the view is added earlier)
-            if (controller.isOverlayVisible()) {
+            if (isPixel() && controller.isOverlayVisible()) {
                 executeInBackground {
                     overlayAddReason = FOLD
                     controller.addOverlay(calculateRevealAmount())

@@ -20,6 +20,8 @@ import com.android.systemui.CoreStartable
 import com.android.systemui.Flags
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.progress.UnfoldTransitionProgressForwarder
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
+import com.android.systemui.unfold.yrrp.PixelOnlyProgressListener
 import java.util.Optional
 import javax.inject.Inject
 
@@ -34,7 +36,8 @@ constructor(
         Optional<UnfoldTransitionProgressProvider>,
     private val unfoldTransitionProgressProviderOptional:
         Optional<UnfoldTransitionProgressProvider>,
-    private val unfoldTransitionProgressForwarder: Optional<UnfoldTransitionProgressForwarder>
+    private val unfoldTransitionProgressForwarder: Optional<UnfoldTransitionProgressForwarder>,
+    private val foldAnimationStyleSelector: FoldAnimationStyleSelector,
 ) : CoreStartable {
     override fun start() {
         unfoldComponentOptional.ifPresent { c: SysUIUnfoldComponent ->
@@ -59,7 +62,9 @@ constructor(
             progressProvider: UnfoldTransitionProgressProvider ->
             unfoldTransitionProgressForwarder.ifPresent {
                 listener: UnfoldTransitionProgressForwarder ->
-                progressProvider.addCallback(listener)
+                progressProvider.addCallback(
+                    PixelOnlyProgressListener(listener, foldAnimationStyleSelector)
+                )
             }
         }
     }

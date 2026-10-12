@@ -686,6 +686,14 @@ public abstract class LogModule {
         return factory.create("CrtScreenOffAnimationLog", 100);
     }
 
+    /** Provides a {@link LogBuffer} for YRRP fold animation selection and lifecycle. */
+    @Provides
+    @SysUISingleton
+    @YrrpFoldAnimationLog
+    public static LogBuffer provideYrrpFoldAnimationLogBuffer(LogBufferFactory factory) {
+        return factory.create("YrrpFoldAnimationLog", 100);
+    }
+
     /**
      * Registers the clear log buffers ADB command.
      */

@@ -37,6 +37,8 @@ import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Comp
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.isVerticalRotation
 import com.android.systemui.unfold.dagger.UnfoldBg
+import com.android.systemui.unfold.yrrp.FoldAnimationStyle
+import com.android.systemui.unfold.yrrp.FoldAnimationStyleSelector
 import com.android.systemui.util.animation.data.repository.AnimationStatusRepository
 import com.android.systemui.util.kotlin.race
 import javax.inject.Inject
@@ -68,7 +70,8 @@ constructor(
     private val animationStatusRepository: AnimationStatusRepository,
     private val controllerFactory: FullscreenLightRevealAnimationController.Factory,
     private val foldLockSettingAvailabilityProvider: FoldLockSettingAvailabilityProvider,
-    private val interactionJankMonitor: InteractionJankMonitor
+    private val interactionJankMonitor: InteractionJankMonitor,
+    private val foldAnimationStyleSelector: FoldAnimationStyleSelector,
 ) : FullscreenLightRevealAnimation {
 
     private val revealProgressValueAnimator: ValueAnimator =
@@ -108,7 +111,12 @@ constructor(
                 .distinctUntilChanged()
                 .flatMapLatest { isFolded ->
                     flow<Nothing> {
-                            if (!areAnimationEnabled.first() || !isFolded) {
+                            if (
+                                !areAnimationEnabled.first() ||
+                                    !isFolded ||
+                                    foldAnimationStyleSelector.currentStyle() !=
+                                        FoldAnimationStyle.PIXEL
+                            ) {
                                 return@flow
                             }
                             race(
