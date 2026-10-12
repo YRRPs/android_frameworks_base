@@ -28,6 +28,7 @@ import com.android.systemui.unfold.domain.interactor.FoldableDisplaySwitchTracki
 import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManager
+import com.android.systemui.unfold.yrrp.YrrpFoldAnimationStartable
 import com.android.systemui.util.kotlin.getOrNull
 import dagger.Binds
 import dagger.BindsInstance
@@ -118,6 +119,11 @@ interface SysUIUnfoldStartableModule {
     @IntoMap
     @ClassKey(PendingDisplayChangeController::class)
     fun bindShadeDisplayController(pendingDisplayChangeController: PendingDisplayChangeController): CoreStartable
+
+    @Binds
+    @IntoMap
+    @ClassKey(YrrpFoldAnimationStartable::class)
+    fun bindsYrrpFoldAnimationStartable(impl: YrrpFoldAnimationStartable): CoreStartable
 }
 
 @Module
