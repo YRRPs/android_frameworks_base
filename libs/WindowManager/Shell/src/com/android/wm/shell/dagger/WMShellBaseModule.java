@@ -145,6 +145,7 @@ import com.android.wm.shell.transition.MixedTransitionHandler;
 import com.android.wm.shell.transition.Transitions;
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider;
 import com.android.wm.shell.unfold.UnfoldAnimationController;
+import com.android.wm.shell.unfold.UnfoldAnimationStyleProvider;
 import com.android.wm.shell.unfold.UnfoldTransitionHandler;
 import com.android.wm.shell.windowdecor.WindowDecorViewModel;
 import com.android.wm.shell.windowdecor.viewholder.AppHandleNotifier;
@@ -654,6 +655,9 @@ public abstract class WMShellBaseModule {
 
     @BindsOptionalOf
     abstract ShellUnfoldProgressProvider optionalShellUnfoldProgressProvider();
+
+    @BindsOptionalOf
+    abstract UnfoldAnimationStyleProvider optionalUnfoldAnimationStyleProvider();
 
     // Workaround for dynamic overriding with a default implementation, see {@link DynamicOverride}
     @BindsOptionalOf

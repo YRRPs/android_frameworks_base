@@ -42,7 +42,10 @@ import com.android.wm.shell.common.DisplayInsetsController;
 import com.android.wm.shell.sysui.ConfigurationChangeListener;
 import com.android.wm.shell.sysui.ShellController;
 import com.android.wm.shell.unfold.UnfoldAnimationController;
+import com.android.wm.shell.unfold.UnfoldAnimationStyleProvider;
 import com.android.wm.shell.unfold.UnfoldBackgroundController;
+
+import java.util.Optional;
 
 /**
  * This helper class contains logic that calculates scaling and cropping parameters
@@ -67,21 +70,26 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
     private static final float START_SCALE = END_SCALE - VERTICAL_START_MARGIN * 2;
 
     private final SparseArray<AnimationContext> mAnimationContextByTaskId = new SparseArray<>();
+    // Home tasks are tracked separately: only the Duo style animates them.
+    private final SparseArray<AnimationContext> mHomeContextByTaskId = new SparseArray<>();
     private final DisplayInsetsController mDisplayInsetsController;
     private final UnfoldBackgroundController mBackgroundController;
     private final Context mContext;
     private final ShellController mShellController;
+    private final Optional<UnfoldAnimationStyleProvider> mStyleProvider;
 
     private InsetsSource mExpandedTaskbarInsetsSource;
     private float mWindowCornerRadiusPx;
 
     public FullscreenUnfoldTaskAnimator(Context context,
             @NonNull UnfoldBackgroundController backgroundController,
-            ShellController shellController, DisplayInsetsController displayInsetsController) {
+            ShellController shellController, DisplayInsetsController displayInsetsController,
+            Optional<UnfoldAnimationStyleProvider> styleProvider) {
         mContext = context;
         mDisplayInsetsController = displayInsetsController;
         mBackgroundController = backgroundController;
         mShellController = shellController;
+        mStyleProvider = styleProvider;
         mWindowCornerRadiusPx = ScreenDecorationsUtils.getWindowCornerRadius(context);
     }
 
@@ -100,10 +108,25 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
     @Override
     public void insetsChanged(InsetsState insetsState) {
         mExpandedTaskbarInsetsSource = getExpandedTaskbarSource(insetsState);
-        for (int i = mAnimationContextByTaskId.size() - 1; i >= 0; i--) {
-            AnimationContext context = mAnimationContextByTaskId.valueAt(i);
+        updateInsets(mAnimationContextByTaskId);
+        updateInsets(mHomeContextByTaskId);
+    }
+
+    private void updateInsets(SparseArray<AnimationContext> contexts) {
+        for (int i = contexts.size() - 1; i >= 0; i--) {
+            AnimationContext context = contexts.valueAt(i);
             context.update(mExpandedTaskbarInsetsSource, context.mTaskInfo);
         }
+    }
+
+    private boolean isDuo() {
+        return mStyleProvider.map(p -> p.getUnfoldAnimationStyle()
+                == UnfoldAnimationStyleProvider.STYLE_DUO).orElse(false);
+    }
+
+    private SparseArray<AnimationContext> contextsFor(TaskInfo taskInfo) {
+        return taskInfo.getActivityType() == ACTIVITY_TYPE_HOME
+                ? mHomeContextByTaskId : mAnimationContextByTaskId;
     }
 
     private static InsetsSource getExpandedTaskbarSource(InsetsState state) {
@@ -118,19 +141,20 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
     }
 
     public boolean hasActiveTasks() {
-        return mAnimationContextByTaskId.size() > 0;
+        return mAnimationContextByTaskId.size() > 0
+                || (isDuo() && mHomeContextByTaskId.size() > 0);
     }
 
     @Override
     public void onTaskAppeared(TaskInfo taskInfo, SurfaceControl leash) {
         AnimationContext animationContext = new AnimationContext(
                 leash, mExpandedTaskbarInsetsSource, taskInfo);
-        mAnimationContextByTaskId.put(taskInfo.taskId, animationContext);
+        contextsFor(taskInfo).put(taskInfo.taskId, animationContext);
     }
 
     @Override
     public void onTaskChanged(TaskInfo taskInfo) {
-        AnimationContext animationContext = mAnimationContextByTaskId.get(taskInfo.taskId);
+        AnimationContext animationContext = contextsFor(taskInfo).get(taskInfo.taskId);
         if (animationContext != null) {
             animationContext.update(mExpandedTaskbarInsetsSource, taskInfo);
         }
@@ -138,17 +162,18 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
 
     @Override
     public void onTaskVanished(TaskInfo taskInfo) {
-        mAnimationContextByTaskId.remove(taskInfo.taskId);
+        contextsFor(taskInfo).remove(taskInfo.taskId);
     }
 
     @Override
     public void clearTasks() {
         mAnimationContextByTaskId.clear();
+        mHomeContextByTaskId.clear();
     }
 
     @Override
     public void resetSurface(TaskInfo taskInfo, Transaction transaction) {
-        final AnimationContext context = mAnimationContextByTaskId.get(taskInfo.taskId);
+        final AnimationContext context = contextsFor(taskInfo).get(taskInfo.taskId);
         if (context != null) {
             resetSurface(context, transaction);
         }
@@ -156,6 +181,11 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
 
     @Override
     public void applyAnimationProgress(float progress, Transaction transaction) {
+        if (isDuo()) {
+            applyDuo(mAnimationContextByTaskId, progress, transaction);
+            applyDuo(mHomeContextByTaskId, progress, transaction);
+            return;
+        }
         if (mAnimationContextByTaskId.size() == 0) return;
 
         for (int i = mAnimationContextByTaskId.size() - 1; i >= 0; i--) {
@@ -166,6 +196,22 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
 
             float scale = lerp(START_SCALE, END_SCALE, progress);
             context.mMatrix.setScale(scale, scale, context.mCurrentCropRect.exactCenterX(),
+                    context.mCurrentCropRect.exactCenterY());
+
+            transaction.setWindowCrop(context.mLeash, context.mCurrentCropRect)
+                    .setMatrix(context.mLeash, context.mMatrix, FLOAT_9)
+                    .setCornerRadius(context.mLeash, mWindowCornerRadiusPx)
+                    .show(context.mLeash);
+        }
+    }
+
+    private void applyDuo(SparseArray<AnimationContext> contexts, float progress,
+            Transaction transaction) {
+        final float scaleX = DuoUnfoldGeometry.scaleX(progress);
+        for (int i = contexts.size() - 1; i >= 0; i--) {
+            final AnimationContext context = contexts.valueAt(i);
+            context.mCurrentCropRect.set(context.mEndCropRect);
+            context.mMatrix.setScale(scaleX, 1f, context.mCurrentCropRect.exactCenterX(),
                     context.mCurrentCropRect.exactCenterY());
 
             transaction.setWindowCrop(context.mLeash, context.mCurrentCropRect)
@@ -189,8 +235,7 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
     public boolean isApplicableTask(TaskInfo taskInfo) {
         return taskInfo != null && taskInfo.isVisible()
                 && taskInfo.realActivity != null // to filter out parents created by organizer
-                && taskInfo.getWindowingMode() == WINDOWING_MODE_FULLSCREEN
-                && taskInfo.getActivityType() != ACTIVITY_TYPE_HOME;
+                && taskInfo.getWindowingMode() == WINDOWING_MODE_FULLSCREEN;
     }
 
     @Override
@@ -198,6 +243,9 @@ public class FullscreenUnfoldTaskAnimator implements UnfoldTaskAnimator,
         for (int i = mAnimationContextByTaskId.size() - 1; i >= 0; i--) {
             final AnimationContext context = mAnimationContextByTaskId.valueAt(i);
             resetSurface(context, transaction);
+        }
+        for (int i = mHomeContextByTaskId.size() - 1; i >= 0; i--) {
+            resetSurface(mHomeContextByTaskId.valueAt(i), transaction);
         }
     }
 

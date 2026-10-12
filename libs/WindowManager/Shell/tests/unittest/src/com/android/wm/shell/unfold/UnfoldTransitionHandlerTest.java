@@ -82,6 +82,7 @@ public class UnfoldTransitionHandlerTest extends ShellTestCase {
     private Handler mHandler;
 
     private final IBinder mTransition = new Binder();
+    private int mStyle = UnfoldAnimationStyleProvider.STYLE_PIXEL;
 
     @Before
     public void before() {
@@ -104,7 +105,8 @@ public class UnfoldTransitionHandlerTest extends ShellTestCase {
                 executor,
                 mHandler,
                 mTransitions,
-                /* bubbleTaskUnfoldTransitionMerger= */ Optional.empty()
+                /* bubbleTaskUnfoldTransitionMerger= */ Optional.empty(),
+                Optional.of(() -> mStyle)
         );
 
         shellInit.init();
@@ -125,6 +127,18 @@ public class UnfoldTransitionHandlerTest extends ShellTestCase {
                 requestInfo);
 
         assertThat(result).isNotNull();
+    }
+
+    @Test
+    public void handleRequest_stockStyle_doesNotClaimUnfold() {
+        mStyle = UnfoldAnimationStyleProvider.STYLE_STOCK;
+        TransitionRequestInfo requestInfo = createUnfoldTransitionRequestInfo();
+
+        WindowContainerTransaction result = mUnfoldTransitionHandler.handleRequest(
+                mTransition, requestInfo);
+
+        assertThat(result).isNull();
+        assertThat(mUnfoldTransitionHandler.willHandleTransition()).isFalse();
     }
 
     @Test

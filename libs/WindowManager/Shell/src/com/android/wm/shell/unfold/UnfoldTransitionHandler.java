@@ -89,6 +89,7 @@ public class UnfoldTransitionHandler implements TransitionHandler, UnfoldListene
     private final Executor mExecutor;
     private final TransactionPool mTransactionPool;
     private final Handler mHandler;
+    private final Optional<UnfoldAnimationStyleProvider> mStyleProvider;
 
     @Nullable
     private TransitionFinishCallback mFinishCallback;
@@ -115,12 +116,14 @@ public class UnfoldTransitionHandler implements TransitionHandler, UnfoldListene
             Executor executor,
             Handler handler,
             Transitions transitions,
-            Optional<BubbleTaskUnfoldTransitionMerger> bubbleTaskUnfoldTransitionMerger) {
+            Optional<BubbleTaskUnfoldTransitionMerger> bubbleTaskUnfoldTransitionMerger,
+            Optional<UnfoldAnimationStyleProvider> styleProvider) {
         mUnfoldProgressProvider = unfoldProgressProvider;
         mTransitions = transitions;
         mTransactionPool = transactionPool;
         mExecutor = executor;
         mHandler = handler;
+        mStyleProvider = styleProvider;
         mBubbleTaskUnfoldTransitionMerger = bubbleTaskUnfoldTransitionMerger;
 
         mAnimators.add(splitUnfoldTaskAnimator);
@@ -311,6 +314,13 @@ public class UnfoldTransitionHandler implements TransitionHandler, UnfoldListene
 
     /** Whether `request` contains an unfold action. */
     public boolean shouldPlayUnfoldAnimation(@NonNull TransitionRequestInfo request) {
+        // YRRP: in Stock no progress arrives, so claiming would hold the display switch for
+        // FINISH_ANIMATION_TIMEOUT_MILLIS.
+        if (mStyleProvider.map(p -> p.getUnfoldAnimationStyle()
+                == UnfoldAnimationStyleProvider.STYLE_STOCK).orElse(false)) {
+            return false;
+        }
+
         // Unfold animation won't play when animations are disabled
         if (!ValueAnimator.areAnimatorsEnabled()) return false;
 
