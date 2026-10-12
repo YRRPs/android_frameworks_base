@@ -94,6 +94,78 @@ class FoldAnimationStyleSelectorTest : SysuiTestCase() {
     }
 
     @Test
+    fun releaseAll_dropsLatchAndTokens_andReportsForcedRelease() {
+        val seen = mutableListOf<String>()
+        underTest.listener =
+            object : FoldAnimationStyleSelector.Listener {
+                override fun onLatched(style: FoldAnimationStyle) {}
+                override fun onReleased(style: FoldAnimationStyle) { seen += "released" }
+                override fun onForceReleased(style: FoldAnimationStyle, reason: String) {
+                    seen += "forced=$style/$reason"
+                }
+            }
+        underTest.onSettingChanged(FoldAnimationStyle.DUO)
+        val token = Any()
+        underTest.onGatedTransitionStarted(token)
+
+        underTest.releaseAll("SLEEP")
+
+        assertThat(underTest.latchedStyle()).isNull()
+        assertThat(underTest.isActive(token)).isFalse()
+        assertThat(seen).containsExactly("forced=DUO/SLEEP")
+        // The lost finish arriving later changes nothing.
+        underTest.onGatedTransitionFinished(token)
+        assertThat(underTest.completions).isEqualTo(0)
+        // The next start latches afresh.
+        underTest.onSettingChanged(FoldAnimationStyle.PIXEL)
+        underTest.onGatedTransitionStarted(Any())
+        assertThat(underTest.latchedStyle()).isEqualTo(FoldAnimationStyle.PIXEL)
+        assertThat(underTest.starts).isEqualTo(2)
+    }
+
+    @Test
+    fun releaseAll_withoutLatch_isSilent() {
+        var forced = 0
+        underTest.listener =
+            object : FoldAnimationStyleSelector.Listener {
+                override fun onLatched(style: FoldAnimationStyle) {}
+                override fun onReleased(style: FoldAnimationStyle) {}
+                override fun onForceReleased(style: FoldAnimationStyle, reason: String) { forced++ }
+            }
+        underTest.releaseAll("SLEEP")
+        assertThat(forced).isEqualTo(0)
+    }
+
+    @Test
+    fun latchIfIdle_latchesOnce_andGatedStartJoinsWithoutDoubleCount() {
+        underTest.onSettingChanged(FoldAnimationStyle.DUO)
+        underTest.latchIfIdle()
+        underTest.latchIfIdle()
+        underTest.onSettingChanged(FoldAnimationStyle.STOCK)
+
+        assertThat(underTest.currentStyle()).isEqualTo(FoldAnimationStyle.DUO)
+        assertThat(underTest.starts).isEqualTo(1)
+
+        val token = Any()
+        assertThat(underTest.onGatedTransitionStarted(token)).isTrue()
+        assertThat(underTest.starts).isEqualTo(1)
+
+        underTest.onGatedTransitionFinished(token)
+        assertThat(underTest.latchedStyle()).isNull()
+        assertThat(underTest.completions).isEqualTo(1)
+    }
+
+    @Test
+    fun latchIfIdle_whileLatched_keepsExistingStyle() {
+        underTest.onSettingChanged(FoldAnimationStyle.PIXEL)
+        underTest.onGatedTransitionStarted(Any())
+        underTest.onSettingChanged(FoldAnimationStyle.DUO)
+
+        assertThat(underTest.latchIfIdle()).isEqualTo(FoldAnimationStyle.PIXEL)
+        assertThat(underTest.starts).isEqualTo(1)
+    }
+
+    @Test
     fun listenerSeesLatchAndRelease() {
         val seen = mutableListOf<String>()
         underTest.listener =

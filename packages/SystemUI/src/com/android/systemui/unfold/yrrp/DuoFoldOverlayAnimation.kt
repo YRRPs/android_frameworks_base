@@ -121,6 +121,9 @@ constructor(
         val coverReveal = isFolded && pendingCoverReveal
         if (unfold) pendingUnfold = false
         if (coverReveal) pendingCoverReveal = false
+        // Latch before reading the style so this overlay and the gated transition that follows
+        // agree on it. Only the unfold: the cover reveal has no gated transition to release it.
+        if (unfold && contentResolver.areAnimationsEnabled()) selector.latchIfIdle()
         when {
             unfold && isDuo() -> {
                 attach(inner, FoldAnimationPhase.UNFOLDING, onOverlayReady)

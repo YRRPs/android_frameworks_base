@@ -31,6 +31,7 @@ import com.android.systemui.unfoldedDeviceState
 import com.android.systemui.util.concurrency.ThreadFactory
 import java.util.concurrent.Executor
 import javax.inject.Provider
+import com.google.common.truth.Truth.assertThat
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -157,6 +158,31 @@ class UnfoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         testableLooper.processAllMessages()
 
         verify(controller, never()).addOverlay(any(), anyOrNull())
+    }
+
+    @Test
+    fun pixel_handshakeLatchesStyle_soGateJoinsInsteadOfRestarting() {
+        selector.onSettingChanged(FoldAnimationStyle.PIXEL)
+        unfoldAfterFold()
+
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+        selector.onSettingChanged(FoldAnimationStyle.STOCK)
+
+        assertThat(selector.latchedStyle()).isEqualTo(FoldAnimationStyle.PIXEL)
+        assertThat(selector.starts).isEqualTo(1)
+        assertThat(selector.onGatedTransitionStarted(Any())).isTrue()
+        assertThat(selector.starts).isEqualTo(1)
+    }
+
+    @Test
+    fun noUnfold_handshakeDoesNotLatch() {
+        selector.onSettingChanged(FoldAnimationStyle.PIXEL)
+
+        underTest.onScreenTurningOn(onOverlayReady)
+        testableLooper.processAllMessages()
+
+        assertThat(selector.latchedStyle()).isNull()
     }
 
     private fun unfoldAfterFold() {

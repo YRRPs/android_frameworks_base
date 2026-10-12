@@ -130,6 +130,22 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
+    fun duoUnfold_handshakeLatchesStyleOnce_andGatedStartJoins() {
+        reportFolded(true)
+        reportFolded(false)
+
+        underTest.onScreenTurningOn {}
+        processAll()
+        selector.onSettingChanged(FoldAnimationStyle.STOCK)
+
+        assertThat(selector.latchedStyle()).isEqualTo(FoldAnimationStyle.DUO)
+        assertThat(selector.starts).isEqualTo(1)
+        selector.onGatedTransitionStarted(progressProvider)
+        assertThat(selector.starts).isEqualTo(1)
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+    }
+
+    @Test
     fun pixel_neverAttaches_andReportsReady() {
         selector.onSettingChanged(FoldAnimationStyle.PIXEL)
         reportFolded(true)

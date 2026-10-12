@@ -22,7 +22,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Forwards a whole transition or none of it, as decided by [gate] when the transition starts. A
- * finish with no start forwards nothing and leaves the gate untouched. All callbacks arrive on
+ * finish with no start forwards nothing and leaves the gate untouched. A start that arrives after
+ * the gate released the token externally begins a fresh transition. All callbacks arrive on
  * the source's progress thread.
  */
 class StyleGatedUnfoldTransitionProgressProvider(
@@ -38,7 +39,9 @@ class StyleGatedUnfoldTransitionProgressProvider(
     }
 
     override fun onTransitionStarted() {
-        if (running) return
+        // A start while running is a duplicate, unless the gate released this token behind our
+        // back (lost finish): then the previous run is dead and this start begins a new one.
+        if (running && gate.isActive(this)) return
         running = true
         passing = gate.onGatedTransitionStarted(this)
         if (passing) listeners.forEach { it.onTransitionStarted() }

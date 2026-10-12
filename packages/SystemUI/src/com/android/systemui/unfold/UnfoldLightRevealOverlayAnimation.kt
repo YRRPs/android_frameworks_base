@@ -99,12 +99,12 @@ constructor(
             Trace.beginSection("$TAG#onScreenTurningOn")
             try {
                 // Add the view only if we are unfolding and this is the first screen on
-                if (
-                    !isFolded &&
-                        !isUnfoldHandled &&
-                        isPixel() &&
-                        contentResolver.areAnimationsEnabled()
-                ) {
+                val unfoldPending =
+                    !isFolded && !isUnfoldHandled && contentResolver.areAnimationsEnabled()
+                // Latch before reading the style so this overlay and the gated transition that
+                // follows agree on it.
+                if (unfoldPending) foldAnimationStyleSelector.latchIfIdle()
+                if (unfoldPending && isPixel()) {
                     overlayAddReason = UNFOLD
                     controller.addOverlay(calculateRevealAmount(), onOverlayReady)
                     isUnfoldHandled = true

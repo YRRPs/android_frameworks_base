@@ -26,4 +26,12 @@ interface UnfoldTransitionStyleGate {
 
     /** Called on the progress thread when [token]'s transition finishes. */
     fun onGatedTransitionFinished(token: Any)
+
+    /**
+     * Whether [token] still holds a started transition. False after the gate released it
+     * externally (sleep, timeout) without a finish, which lets the provider treat its next start
+     * as a fresh one instead of swallowing it. Defaults to true for gates that never release
+     * early.
+     */
+    fun isActive(token: Any): Boolean = true
 }

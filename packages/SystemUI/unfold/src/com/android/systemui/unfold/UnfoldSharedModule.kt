@@ -33,9 +33,9 @@ import com.android.systemui.unfold.updates.hinge.HingeAngleProvider
 import com.android.systemui.unfold.updates.hinge.HingeSensorAngleProvider
 import com.android.systemui.unfold.util.ATraceLoggerTransitionProgressListener
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider
+import com.android.systemui.unfold.util.StyleGatedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManager
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityManagerImpl
-import com.android.systemui.unfold.util.StyleGatedUnfoldTransitionProgressProvider
 import com.android.systemui.unfold.util.UnfoldKeyguardVisibilityProvider
 import com.android.systemui.unfold.util.UnfoldTransitionStyleGate
 import dagger.BindsOptionalOf

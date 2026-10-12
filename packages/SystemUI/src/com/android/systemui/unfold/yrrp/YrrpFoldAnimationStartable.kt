@@ -17,6 +17,7 @@
 package com.android.systemui.unfold.yrrp
 
 import android.content.ContentResolver
+import androidx.annotation.GuardedBy
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.systemui.CoreStartable
 import com.android.systemui.Dumpable
@@ -26,15 +27,18 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.LogLevel
 import com.android.systemui.log.dagger.YrrpFoldAnimationLog
+import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.unfold.config.UnfoldTransitionConfig
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 /**
- * Feeds the per-user setting into [FoldAnimationStyleSelector], logs latch transitions, and dumps
- * every gate. Dump: `dumpsys activity service com.android.systemui/.SystemUIService
+ * Feeds the per-user setting into [FoldAnimationStyleSelector], logs latch transitions, releases a
+ * stuck latch on sleep or after [LATCH_TIMEOUT_MS], and dumps every gate. Dump: `dumpsys activity service com.android.systemui/.SystemUIService
  * YrrpFoldAnimation YrrpFoldAnimationLog`.
  */
 @SysUISingleton
@@ -45,6 +49,7 @@ class YrrpFoldAnimationStartable(
     private val config: UnfoldTransitionConfig,
     private val dumpManager: DumpManager,
     private val logBuffer: LogBuffer,
+    private val powerInteractor: PowerInteractor,
     private val backgroundScope: CoroutineScope,
     private val animationsEnabled: () -> Boolean,
 ) : CoreStartable, Dumpable {
@@ -57,6 +62,7 @@ class YrrpFoldAnimationStartable(
         config: UnfoldTransitionConfig,
         dumpManager: DumpManager,
         @YrrpFoldAnimationLog logBuffer: LogBuffer,
+        powerInteractor: PowerInteractor,
         @Background backgroundScope: CoroutineScope,
         contentResolver: ContentResolver,
     ) : this(
@@ -66,24 +72,64 @@ class YrrpFoldAnimationStartable(
         config,
         dumpManager,
         logBuffer,
+        powerInteractor,
         backgroundScope,
         { contentResolver.areAnimationsEnabled() },
     )
+
+    private val timeoutLock = Any()
+    @GuardedBy("timeoutLock") private var timeoutJob: Job? = null
 
     override fun start() {
         dumpManager.registerNormalDumpable(TAG, this)
         selector.listener =
             object : FoldAnimationStyleSelector.Listener {
-                override fun onLatched(style: FoldAnimationStyle) = log("latched style=$style")
+                override fun onLatched(style: FoldAnimationStyle) {
+                    log("latched style=$style")
+                    armTimeout()
+                }
 
-                override fun onReleased(style: FoldAnimationStyle) = log("released style=$style")
+                override fun onReleased(style: FoldAnimationStyle) {
+                    log("released style=$style")
+                    disarmTimeout()
+                }
+
+                override fun onForceReleased(style: FoldAnimationStyle, reason: String) {
+                    runtimeState.recordCancel(reason)
+                    log("released style=$style forced reason=$reason")
+                    disarmTimeout()
+                }
             }
+        backgroundScope.launch {
+            powerInteractor.isAsleep.collect { asleep ->
+                if (asleep) selector.releaseAll("SLEEP")
+            }
+        }
         backgroundScope.launch {
             repository.setting.collect { raw ->
                 val style = FoldAnimationStyle.fromRaw(raw)
                 selector.onSettingChanged(style)
                 log("setting raw=$raw style=$style")
             }
+        }
+    }
+
+    /** A lost finish must not pin the style or swallow the next start: release after a delay. */
+    private fun armTimeout() {
+        synchronized(timeoutLock) {
+            timeoutJob?.cancel()
+            timeoutJob =
+                backgroundScope.launch {
+                    delay(LATCH_TIMEOUT_MS)
+                    selector.releaseAll("LATCH_TIMEOUT")
+                }
+        }
+    }
+
+    private fun disarmTimeout() {
+        synchronized(timeoutLock) {
+            timeoutJob?.cancel()
+            timeoutJob = null
         }
     }
 
@@ -122,5 +168,6 @@ class YrrpFoldAnimationStartable(
 
     companion object {
         const val TAG = "YrrpFoldAnimation"
+        const val LATCH_TIMEOUT_MS = 10_000L
     }
 }

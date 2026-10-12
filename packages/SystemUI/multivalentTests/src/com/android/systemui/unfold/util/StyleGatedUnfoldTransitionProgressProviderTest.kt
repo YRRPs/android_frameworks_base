@@ -99,18 +99,48 @@ class StyleGatedUnfoldTransitionProgressProviderTest : SysuiTestCase() {
         assertThat(events).containsExactly("start", "p0.3", "finish").inOrder()
     }
 
+    @Test
+    fun externalRelease_rearmsProvider_nextStartIsFresh() {
+        gate.allow = true
+        source.onTransitionStarted()
+        // The gate dropped this token (sleep or timeout) and the finish was lost.
+        gate.active = false
+        events.clear()
+
+        source.onTransitionStarted()
+        source.onTransitionProgress(0.2f)
+        source.onTransitionFinished()
+
+        assertThat(gate.started).isEqualTo(2)
+        assertThat(events).containsExactly("start", "p0.2", "finish").inOrder()
+    }
+
+    @Test
+    fun duplicateStartWhileActive_isStillIgnored() {
+        gate.allow = true
+        source.onTransitionStarted()
+        source.onTransitionStarted()
+
+        assertThat(gate.started).isEqualTo(1)
+        assertThat(events).containsExactly("start")
+    }
+
     private class FakeGate : UnfoldTransitionStyleGate {
         var allow = true
+        var active = true
         var started = 0
         var finished = 0
 
         override fun onGatedTransitionStarted(token: Any): Boolean {
             started++
+            active = true
             return allow
         }
 
         override fun onGatedTransitionFinished(token: Any) {
             finished++
         }
+
+        override fun isActive(token: Any) = active
     }
 }

@@ -21,6 +21,7 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.log.logcatLogBuffer
+import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.unfold.config.UnfoldTransitionConfig
 import com.google.common.truth.Truth.assertThat
 import java.io.PrintWriter
@@ -28,6 +29,7 @@ import java.io.StringWriter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -44,6 +46,9 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
     private val selector = FoldAnimationStyleSelector()
     private val runtime = FoldAnimationRuntimeState()
     private val raw = MutableStateFlow(0)
+    private val isAsleep = MutableStateFlow(false)
+    private val powerInteractor =
+        mock<PowerInteractor> { on { isAsleep } doReturn this@YrrpFoldAnimationStartableTest.isAsleep }
     private val repository = mock<FoldAnimationSettingsRepository>()
     private val dumpManager = mock<DumpManager>()
     private val config =
@@ -109,6 +114,86 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
         assertThat(out.toString()).contains("blockedBy=NONE")
     }
 
+    @Test
+    fun sleep_releasesLatch_andCountsCancellation() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        raw.value = 2
+        create(this).start()
+        runCurrent()
+        selector.onGatedTransitionStarted(Any())
+        assertThat(selector.latchedStyle()).isEqualTo(FoldAnimationStyle.DUO)
+
+        isAsleep.value = true
+        runCurrent()
+
+        assertThat(selector.latchedStyle()).isNull()
+        assertThat(runtime.cancellations).isEqualTo(1)
+        assertThat(runtime.lastCancelReason).isEqualTo("SLEEP")
+    }
+
+    @Test
+    fun sleepWithoutLatch_recordsNothing() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        create(this).start()
+        runCurrent()
+
+        isAsleep.value = true
+        runCurrent()
+
+        assertThat(runtime.cancellations).isEqualTo(0)
+    }
+
+    @Test
+    fun latchTimeout_releasesLatchAfterTenSeconds() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        raw.value = 1
+        create(this).start()
+        runCurrent()
+        selector.onGatedTransitionStarted(Any())
+
+        advanceTimeBy(YrrpFoldAnimationStartable.LATCH_TIMEOUT_MS - 1)
+        runCurrent()
+        assertThat(selector.latchedStyle()).isEqualTo(FoldAnimationStyle.PIXEL)
+
+        advanceTimeBy(2)
+        runCurrent()
+        assertThat(selector.latchedStyle()).isNull()
+        assertThat(runtime.lastCancelReason).isEqualTo("LATCH_TIMEOUT")
+        assertThat(runtime.cancellations).isEqualTo(1)
+    }
+
+    @Test
+    fun normalFinish_cancelsTimeout_soNoCancellationIsRecorded() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        create(this).start()
+        runCurrent()
+        val token = Any()
+        selector.onGatedTransitionStarted(token)
+        selector.onGatedTransitionFinished(token)
+
+        advanceTimeBy(YrrpFoldAnimationStartable.LATCH_TIMEOUT_MS + 1)
+        runCurrent()
+
+        assertThat(runtime.cancellations).isEqualTo(0)
+    }
+
+    @Test
+    fun staleTimeout_doesNotReleaseLaterLatch() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        create(this).start()
+        runCurrent()
+        val first = Any()
+        selector.onGatedTransitionStarted(first)
+        advanceTimeBy(6_000)
+        selector.onGatedTransitionFinished(first)
+        selector.onGatedTransitionStarted(Any())
+
+        advanceTimeBy(6_000)
+        runCurrent()
+
+        assertThat(selector.latchedStyle()).isNotNull()
+    }
+
     private fun create(scope: TestScope, animationsEnabled: Boolean = true) =
         YrrpFoldAnimationStartable(
             repository = repository,
@@ -118,6 +203,7 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
             dumpManager = dumpManager,
             // A real buffer: a bare mock returns null from obtain() and the inline log() NPEs.
             logBuffer = logcatLogBuffer("YrrpFoldAnimationLog"),
+            powerInteractor = powerInteractor,
             backgroundScope = scope.backgroundScope,
             animationsEnabled = { animationsEnabled },
         )

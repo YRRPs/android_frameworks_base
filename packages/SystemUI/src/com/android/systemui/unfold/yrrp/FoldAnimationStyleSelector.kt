@@ -24,7 +24,8 @@ import javax.inject.Singleton
 
 /**
  * Latches the user's fold animation style when the first gated progress provider starts a
- * transition and releases it when the last one finishes. Every unfold consumer, Shell included,
+ * transition (or a screen-on handshake calls [latchIfIdle] first) and releases it when the last
+ * gated provider finishes, or by force through [releaseAll] on sleep or timeout. Every unfold consumer, Shell included,
  * reads [currentStyle], so one transition never mixes styles. Lives in the global graph because
  * Shell and the unfold library are both resolved there.
  */
@@ -36,6 +37,9 @@ class FoldAnimationStyleSelector @Inject constructor() :
         fun onLatched(style: FoldAnimationStyle)
 
         fun onReleased(style: FoldAnimationStyle)
+
+        /** The latch was dropped without a normal finish; [reason] names why. */
+        fun onForceReleased(style: FoldAnimationStyle, reason: String) {}
     }
 
     @Volatile var listener: Listener? = null
@@ -63,19 +67,52 @@ class FoldAnimationStyleSelector @Inject constructor() :
 
     override fun getUnfoldAnimationStyle(): Int = currentStyle().shellValue
 
+    /**
+     * Latches the current setting if nothing is latched yet and returns the style now latched. The
+     * screen-on handshake calls this so the overlays and the gate agree; the gated start that
+     * follows joins this latch instead of starting a second one.
+     */
+    fun latchIfIdle(): FoldAnimationStyle {
+        val (style, newlyLatched) = synchronized(lock) { latchLocked() }
+        if (newlyLatched) listener?.onLatched(style)
+        return style
+    }
+
+    @GuardedBy("lock")
+    private fun latchLocked(): Pair<FoldAnimationStyle, Boolean> {
+        val fresh = latched == null
+        if (fresh) {
+            latched = setting
+            startCount++
+        }
+        return latched!! to fresh
+    }
+
     override fun onGatedTransitionStarted(token: Any): Boolean {
         val (style, newlyLatched) =
             synchronized(lock) {
-                val fresh = activeTokens.isEmpty()
-                if (fresh) {
-                    latched = setting
-                    startCount++
-                }
+                val result = latchLocked()
                 activeTokens += token
-                latched!! to fresh
+                result
             }
         if (newlyLatched) listener?.onLatched(style)
         return style != FoldAnimationStyle.STOCK
+    }
+
+    override fun isActive(token: Any): Boolean = synchronized(lock) { token in activeTokens }
+
+    /**
+     * Drops the latch and every token without a finish (sleep, safety timeout). Tokens dropped
+     * here report inactive, so their providers treat the next start as fresh. Does nothing when
+     * nothing is latched.
+     */
+    fun releaseAll(reason: String) {
+        val released =
+            synchronized(lock) {
+                activeTokens.clear()
+                latched.also { latched = null }
+            }
+        released?.let { listener?.onForceReleased(it, reason) }
     }
 
     override fun onGatedTransitionFinished(token: Any) {
