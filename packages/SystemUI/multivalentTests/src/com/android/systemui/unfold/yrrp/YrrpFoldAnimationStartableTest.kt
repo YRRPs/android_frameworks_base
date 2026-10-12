@@ -36,6 +36,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -56,6 +57,43 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
             on { isEnabled } doReturn true
             on { isHingeAngleEnabled } doReturn true
         }
+
+    private var hingeSensor = true
+
+    @Test
+    fun unsupportedDevice_registersDumpOnly_andKeepsStock() = runTest {
+        hingeSensor = false
+        whenever(repository.setting).thenReturn(raw)
+        raw.value = 2
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+
+        verify(dumpManager).registerNormalDumpable(YrrpFoldAnimationStartable.TAG, underTest)
+        verify(repository, never()).setting
+        verify(powerInteractor, never()).isAsleep
+        assertThat(selector.settingStyle()).isEqualTo(FoldAnimationStyle.STOCK)
+
+        val out = StringWriter()
+        underTest.dump(PrintWriter(out), emptyArray())
+        assertThat(out.toString()).contains("hingeSensorPresent=false")
+        assertThat(out.toString()).contains("eligible=false")
+        assertThat(out.toString()).contains("blockedBy=NO_HINGE_SENSOR")
+    }
+
+    @Test
+    fun unfoldConfigOff_isBlockedByConfigDisabled() = runTest {
+        whenever(config.isEnabled).thenReturn(false)
+        whenever(repository.setting).thenReturn(raw)
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+
+        val out = StringWriter()
+        underTest.dump(PrintWriter(out), emptyArray())
+        assertThat(out.toString()).contains("blockedBy=CONFIG_DISABLED")
+        verify(powerInteractor, never()).isAsleep
+    }
 
     @Test
     fun pushesSettingIntoSelector_andRegistersDumpable() = runTest {
@@ -86,6 +124,7 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
                 "latchedStyle=none",
                 "configEnabled=true",
                 "hingeAngleEnabled=true",
+                "hingeSensorPresent=true",
                 "animationsEnabled=",
                 "blurAvailable=",
                 "eligible=false",
@@ -200,6 +239,7 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
             selector = selector,
             runtimeState = runtime,
             config = config,
+            support = FoldAnimationSupport(config) { hingeSensor },
             dumpManager = dumpManager,
             // A real buffer: a bare mock returns null from obtain() and the inline log() NPEs.
             logBuffer = logcatLogBuffer("YrrpFoldAnimationLog"),

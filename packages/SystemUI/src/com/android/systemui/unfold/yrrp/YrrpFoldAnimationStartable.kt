@@ -48,6 +48,7 @@ class YrrpFoldAnimationStartable(
     private val selector: FoldAnimationStyleSelector,
     private val runtimeState: FoldAnimationRuntimeState,
     private val config: UnfoldTransitionConfig,
+    private val support: FoldAnimationSupport,
     private val dumpManager: DumpManager,
     private val logBuffer: LogBuffer,
     private val powerInteractor: PowerInteractor,
@@ -61,6 +62,7 @@ class YrrpFoldAnimationStartable(
         selector: FoldAnimationStyleSelector,
         runtimeState: FoldAnimationRuntimeState,
         config: UnfoldTransitionConfig,
+        support: FoldAnimationSupport,
         dumpManager: DumpManager,
         @YrrpFoldAnimationLog logBuffer: LogBuffer,
         powerInteractor: PowerInteractor,
@@ -71,6 +73,7 @@ class YrrpFoldAnimationStartable(
         selector,
         runtimeState,
         config,
+        support,
         dumpManager,
         logBuffer,
         powerInteractor,
@@ -83,6 +86,11 @@ class YrrpFoldAnimationStartable(
 
     override fun start() {
         dumpManager.registerNormalDumpable(TAG, this)
+        // Not a supported foldable: leave the selector on Stock and observe nothing.
+        if (!support.isSupported) {
+            log("unsupported device blockedBy=${support.blockedBy}")
+            return
+        }
         selector.listener =
             object : FoldAnimationStyleSelector.Listener {
                 override fun onLatched(style: FoldAnimationStyle) {
@@ -140,8 +148,8 @@ class YrrpFoldAnimationStartable(
 
     /** The first false gate in evaluation order, or `NONE`. */
     private fun blockedBy(animations: Boolean): String =
-        when {
-            !config.isEnabled -> "CONFIG_DISABLED"
+        support.blockedBy
+            ?: when {
             selector.currentStyle() == FoldAnimationStyle.STOCK -> "STYLE_STOCK"
             !animations -> "ANIMATIONS_DISABLED"
             else -> "NONE"
@@ -155,6 +163,7 @@ class YrrpFoldAnimationStartable(
         pw.println("latchedStyle=${selector.latchedStyle() ?: "none"}")
         pw.println("configEnabled=${config.isEnabled}")
         pw.println("hingeAngleEnabled=${config.isHingeAngleEnabled}")
+        pw.println("hingeSensorPresent=${support.hingeSensorPresent}")
         pw.println("animationsEnabled=$animations")
         pw.println("blurAvailable=${runtimeState.blurAvailable}")
         pw.println("eligible=${blocked == "NONE"}")
