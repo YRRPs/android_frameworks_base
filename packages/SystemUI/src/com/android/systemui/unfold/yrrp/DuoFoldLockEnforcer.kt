@@ -28,6 +28,9 @@ interface FoldLockSettings {
     /** Emits whenever the selected user, their fold animation, or their fold-lock value changes. */
     val state: Flow<FoldLockState>
 
+    /** Reads [userId]'s stored fold animation style now, bypassing [state]. */
+    fun readStyleRaw(userId: Int): Int
+
     /** Writes Always for [userId]; returns false when the write fails. */
     fun forceAlways(userId: Int): Boolean
 }
@@ -59,8 +62,11 @@ class DuoFoldLockEnforcer(
 
     private fun onState(state: FoldLockState) {
         foldLockValue = state.value
-        duoOn = FoldAnimationStyle.fromRaw(state.styleRaw) == FoldAnimationStyle.DUO
+        duoOn = isDuoRaw(state.styleRaw)
         if (!duoOn || state.value == ALWAYS) return
+        // Leaving Duo, Settings writes the style before it restores the value. An emission can
+        // pair the old Duo style with the restored value, so confirm Duo before overwriting it.
+        if (!isDuoRaw(settings.readStyleRaw(state.userId))) return
         if (settings.forceAlways(state.userId)) {
             rewrites++
             log("foldLock forced from=${state.value} user=${state.userId}")
@@ -68,6 +74,9 @@ class DuoFoldLockEnforcer(
             log("foldLock force failed from=${state.value} user=${state.userId}")
         }
     }
+
+    private fun isDuoRaw(styleRaw: Int) =
+        FoldAnimationStyle.fromRaw(styleRaw) == FoldAnimationStyle.DUO
 
     companion object {
         /** Settings' "Always" choice, `FoldSettingProvider.SETTING_VALUE_STAY_AWAKE_ON_FOLD`. */

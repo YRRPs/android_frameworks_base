@@ -63,15 +63,20 @@ constructor(
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
 
+    override fun readStyleRaw(userId: Int): Int =
+        secureSettings.getIntForUser(STYLE_KEY, STOCK_VALUE, userId)
+
     override fun forceAlways(userId: Int): Boolean =
         systemSettings.putStringForUser(FOLD_LOCK_KEY, DuoFoldLockEnforcer.ALWAYS, userId)
 
-    private fun read(userId: Int) =
-        FoldLockState(
-            userId = userId,
-            styleRaw = secureSettings.getIntForUser(STYLE_KEY, STOCK_VALUE, userId),
-            value = systemSettings.getStringForUser(FOLD_LOCK_KEY, userId),
-        )
+    /**
+     * Reads the value before the style. Settings writes the style first when leaving Duo, so a
+     * restored value is never paired with the old Duo style here.
+     */
+    private fun read(userId: Int): FoldLockState {
+        val value = systemSettings.getStringForUser(FOLD_LOCK_KEY, userId)
+        return FoldLockState(userId = userId, styleRaw = readStyleRaw(userId), value = value)
+    }
 
     companion object {
         /** `Settings.System.FOLD_LOCK_BEHAVIOR`. */
