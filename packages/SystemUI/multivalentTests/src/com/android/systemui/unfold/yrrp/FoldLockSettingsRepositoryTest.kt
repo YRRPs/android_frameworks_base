@@ -108,6 +108,12 @@ class FoldLockSettingsRepositoryTest : SysuiTestCase() {
         }
 
     @Test
+    fun readStyleRaw_readsThatUsersStoredStyle() {
+        assertThat(underTest.readStyleRaw(USER_1.id)).isEqualTo(2)
+        assertThat(underTest.readStyleRaw(USER_2.id)).isEqualTo(1)
+    }
+
+    @Test
     fun forceAlways_writesOnlyThatUser() {
         assertThat(underTest.forceAlways(USER_2.id)).isTrue()
 

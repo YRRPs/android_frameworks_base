@@ -112,6 +112,19 @@ class DuoFoldLockEnforcerTest : SysuiTestCase() {
     }
 
     @Test
+    fun styleLeftDuoBeforeTheForce_writesNothing() = runTest {
+        start(this)
+        // The emission still says Duo, but Settings has since written Stock and restored Never.
+        settings.freshStyleRaw = 0
+
+        settings.state.value = FoldLockState(userId = 0, styleRaw = 2, value = NEVER)
+        runCurrent()
+
+        assertThat(settings.writes).isEmpty()
+        assertThat(settings.styleReads).containsExactly(0)
+    }
+
+    @Test
     fun beforeStart_reportsUnknownValue() {
         val underTest = DuoFoldLockEnforcer(settings) { logs += it }
 
@@ -127,7 +140,15 @@ class DuoFoldLockEnforcerTest : SysuiTestCase() {
         override val state =
             MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
         val writes = mutableListOf<Int>()
+        val styleReads = mutableListOf<Int>()
         var failWrites = false
+        /** What a fresh read of the style returns; null reads the emitted style. */
+        var freshStyleRaw: Int? = null
+
+        override fun readStyleRaw(userId: Int): Int {
+            styleReads += userId
+            return freshStyleRaw ?: state.value.styleRaw
+        }
 
         override fun forceAlways(userId: Int): Boolean {
             writes += userId

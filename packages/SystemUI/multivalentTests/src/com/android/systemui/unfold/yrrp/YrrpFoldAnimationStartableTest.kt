@@ -66,6 +66,8 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
         object : FoldLockSettings {
             override val state = foldLockState
 
+            override fun readStyleRaw(userId: Int) = foldLockState.value.styleRaw
+
             override fun forceAlways(userId: Int): Boolean {
                 foldLockWrites += userId
                 foldLockState.value = foldLockState.value.copy(value = DuoFoldLockEnforcer.ALWAYS)
