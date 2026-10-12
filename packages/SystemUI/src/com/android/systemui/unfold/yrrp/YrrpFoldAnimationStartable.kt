@@ -125,12 +125,15 @@ class YrrpFoldAnimationStartable(
 
     /** A lost finish must not pin the style or swallow the next start: release after a delay. */
     private fun armTimeout() {
+        // onLatched runs outside the selector lock, so this latch may already be gone. Release
+        // only the generation seen here, never a later latch.
+        val generation = selector.latchGeneration
         synchronized(timeoutLock) {
             timeoutJob?.cancel()
             timeoutJob =
                 backgroundScope.launch {
                     delay(LATCH_TIMEOUT_MS)
-                    selector.releaseAll("LATCH_TIMEOUT")
+                    selector.releaseIfGeneration(generation, "LATCH_TIMEOUT")
                 }
         }
     }

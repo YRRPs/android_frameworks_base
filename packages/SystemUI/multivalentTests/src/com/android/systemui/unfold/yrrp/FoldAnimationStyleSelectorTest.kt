@@ -166,6 +166,24 @@ class FoldAnimationStyleSelectorTest : SysuiTestCase() {
     }
 
     @Test
+    fun releaseIfGeneration_ignoresAnOlderLatch() {
+        val underTest = FoldAnimationStyleSelector()
+        underTest.onSettingChanged(FoldAnimationStyle.DUO)
+        val first = Any()
+        underTest.onGatedTransitionStarted(first)
+        val firstGeneration = underTest.latchGeneration
+        underTest.onGatedTransitionFinished(first)
+        underTest.onGatedTransitionStarted(Any())
+
+        // A timeout armed for the first latch fires during the second one.
+        underTest.releaseIfGeneration(firstGeneration, "LATCH_TIMEOUT")
+        assertThat(underTest.latchedStyle()).isEqualTo(FoldAnimationStyle.DUO)
+
+        underTest.releaseIfGeneration(underTest.latchGeneration, "LATCH_TIMEOUT")
+        assertThat(underTest.latchedStyle()).isNull()
+    }
+
+    @Test
     fun listenerSeesLatchAndRelease() {
         val seen = mutableListOf<String>()
         underTest.listener =

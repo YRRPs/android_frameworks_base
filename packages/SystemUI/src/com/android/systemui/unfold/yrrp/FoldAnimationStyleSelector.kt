@@ -50,6 +50,7 @@ class FoldAnimationStyleSelector @Inject constructor() :
     @GuardedBy("lock") private val activeTokens = mutableSetOf<Any>()
     @GuardedBy("lock") private var startCount = 0
     @GuardedBy("lock") private var completionCount = 0
+    @GuardedBy("lock") private var generation = 0
 
     val starts: Int
         get() = synchronized(lock) { startCount }
@@ -64,6 +65,10 @@ class FoldAnimationStyleSelector @Inject constructor() :
     fun latchedStyle(): FoldAnimationStyle? = synchronized(lock) { latched }
 
     fun currentStyle(): FoldAnimationStyle = synchronized(lock) { latched ?: setting }
+
+    /** Increments with every fresh latch, so a timeout can tell its latch from a later one. */
+    val latchGeneration: Int
+        get() = synchronized(lock) { generation }
 
     override fun getUnfoldAnimationStyle(): Int = currentStyle().shellValue
 
@@ -84,6 +89,7 @@ class FoldAnimationStyleSelector @Inject constructor() :
         if (fresh) {
             latched = setting
             startCount++
+            generation++
         }
         return latched!! to fresh
     }
@@ -109,6 +115,17 @@ class FoldAnimationStyleSelector @Inject constructor() :
     fun releaseAll(reason: String) {
         val released =
             synchronized(lock) {
+                activeTokens.clear()
+                latched.also { latched = null }
+            }
+        released?.let { listener?.onForceReleased(it, reason) }
+    }
+
+    /** Like [releaseAll], but only while the latch whose [latchGeneration] is [expected] holds. */
+    fun releaseIfGeneration(expected: Int, reason: String) {
+        val released =
+            synchronized(lock) {
+                if (latched == null || generation != expected) return
                 activeTokens.clear()
                 latched.also { latched = null }
             }
