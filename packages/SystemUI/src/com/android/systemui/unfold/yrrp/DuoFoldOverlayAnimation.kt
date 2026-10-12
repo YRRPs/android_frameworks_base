@@ -42,11 +42,16 @@ import com.android.systemui.unfold.UnfoldTransitionProgressProvider
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import com.android.systemui.util.concurrency.ThreadFactory
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 
 /**
  * The Duo fold animation's blur. Unfolding: the inner screen turns on fully blurred and clears
@@ -78,6 +83,7 @@ constructor(
     private var pendingUnfold = false
     private var pendingCoverReveal = false
     private var coverAnimator: ValueAnimator? = null
+    private var coverWaitJob: Job? = null
 
     override fun init() {
         inner =
@@ -122,12 +128,24 @@ constructor(
             }
             coverReveal && isDuo() -> {
                 attach(cover, FoldAnimationPhase.COVER_REVEAL, onOverlayReady)
-                applicationScope.launch {
-                    powerInteractor.screenPowerState
-                        .filter { it == ScreenPowerState.SCREEN_ON }
-                        .first()
-                    onBg { onCoverScreenOn() }
-                }
+                coverWaitJob?.cancel()
+                coverWaitJob =
+                    applicationScope.launch {
+                        try {
+                            withTimeout(READY_TIMEOUT_MS) {
+                                powerInteractor.screenPowerState
+                                    .filter { it == ScreenPowerState.SCREEN_ON }
+                                    .first()
+                            }
+                            onBg { onCoverScreenOn() }
+                        } catch (e: TimeoutCancellationException) {
+                            onBg {
+                                if (runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
+                                    cancel("COVER_TIMEOUT")
+                                }
+                            }
+                        }
+                    }
             }
             else -> onOverlayReady.run()
         }
@@ -138,8 +156,13 @@ constructor(
         phase: FoldAnimationPhase,
         onOverlayReady: Runnable,
     ) {
+        // The commit listener and the failure path must not both report ready.
+        val reported = AtomicBoolean(false)
+        val readyOnce = Runnable {
+            if (reported.compareAndSet(false, true)) onOverlayReady.run()
+        }
         try {
-            controller.addOverlay(ALPHA_TRANSPARENT, onOverlayReady)
+            controller.addOverlay(ALPHA_TRANSPARENT, readyOnce)
             runtimeState.blurAvailable =
                 controller.setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
             runtimeState.overlayAttached = true
@@ -147,7 +170,7 @@ constructor(
             log("overlay added phase=$phase blur=${runtimeState.blurAvailable}")
         } catch (e: RuntimeException) {
             controller.ensureOverlayRemoved()
-            onOverlayReady.run()
+            readyOnce.run()
             log("failed stage=attach exception=${e.javaClass.simpleName}")
         }
     }
@@ -161,11 +184,11 @@ constructor(
                 duration = COVER_REVEAL_MS
                 interpolator = DecelerateInterpolator()
                 addUpdateListener {
-                    cover.setBackgroundBlurRadius(
-                        DuoBlurCurve.radiusFor(
-                            it.animatedFraction * DuoBlurCurve.BLUR_CLEAR_PROGRESS
+                    // animatedFraction is already eased by the decelerate interpolator.
+                    runtimeState.blurAvailable =
+                        cover.setBackgroundBlurRadius(
+                            (DuoBlurCurve.MAX_BLUR_PX * (1f - it.animatedFraction)).roundToInt()
                         )
-                    )
                 }
                 addListener(
                     object : AnimatorListenerAdapter() {
@@ -177,7 +200,13 @@ constructor(
 
                         override fun onAnimationEnd(animation: Animator) {
                             // A cancel already cleaned up or superseded this run.
-                            if (!cancelled) onBg { detach(cover) }
+                            if (!cancelled) {
+                                onBg {
+                                    if (runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
+                                        detach(cover)
+                                    }
+                                }
+                            }
                         }
                     }
                 )
@@ -187,6 +216,7 @@ constructor(
 
     private fun detach(controller: FullscreenLightRevealAnimationController) {
         controller.ensureOverlayRemoved()
+        controller.isTouchBlocked = false
         runtimeState.overlayAttached = false
         runtimeState.phase = FoldAnimationPhase.IDLE
         log("overlay removed")
@@ -194,8 +224,10 @@ constructor(
 
     private fun cancel(reason: String) {
         coverAnimator?.cancel()
+        coverWaitJob?.cancel()
         if (runtimeState.overlayAttached) runtimeState.recordCancel(reason)
         inner.ensureOverlayRemoved()
+        inner.isTouchBlocked = false
         cover.ensureOverlayRemoved()
         runtimeState.overlayAttached = false
         runtimeState.phase = FoldAnimationPhase.IDLE
@@ -220,10 +252,9 @@ constructor(
             ) {
                 return@onBg
             }
-            if (runtimeState.blurAvailable) {
-                runtimeState.blurAvailable =
-                    inner.setBackgroundBlurRadius(DuoBlurCurve.radiusFor(progress))
-            }
+            // Retry every callback: the first apply can precede a valid surface.
+            runtimeState.blurAvailable =
+                inner.setBackgroundBlurRadius(DuoBlurCurve.radiusFor(progress))
             inner.isTouchBlocked =
                 runtimeState.phase == FoldAnimationPhase.FOLDING ||
                     progress < DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS
@@ -246,6 +277,8 @@ constructor(
                 if (folded == isFolded) return@Consumer
                 if (folded && runtimeState.phase == FoldAnimationPhase.UNFOLDING) {
                     cancel("FOLDED")
+                } else if (!folded && runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
+                    cancel("UNFOLDED")
                 } else if (folded) {
                     inner.ensureOverlayRemoved()
                     runtimeState.overlayAttached = false
@@ -275,5 +308,6 @@ constructor(
         private const val INNER_OVERLAY_TITLE = "yrrp-duo-unfold-overlay"
         private const val COVER_OVERLAY_TITLE = "yrrp-duo-cover-overlay"
         const val COVER_REVEAL_MS = 350L
+        const val READY_TIMEOUT_MS = 2000L
     }
 }

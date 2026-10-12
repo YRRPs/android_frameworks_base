@@ -160,7 +160,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
-    fun blurRefused_marksBlurUnavailable_butKeepsRunning() {
+    fun blurRefused_marksBlurUnavailable_thenRetriesOnProgress() {
         whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(false)
         reportFolded(true)
         reportFolded(false)
@@ -170,6 +170,75 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
         assertThat(runtime.blurAvailable).isFalse()
         verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull())
+
+        whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(true)
+        progressProvider.onTransitionProgress(0.5f)
+        processAll()
+
+        verify(innerController).setBackgroundBlurRadius(DuoBlurCurve.radiusFor(0.5f))
+        assertThat(runtime.blurAvailable).isTrue()
+    }
+
+    @Test
+    fun attachFailure_reportsReadyExactlyOnce() {
+        var readyCount = 0
+        whenever(innerController.addOverlay(any(), anyOrNull())).thenAnswer {
+            (it.arguments[1] as Runnable).run()
+        }
+        whenever(innerController.setBackgroundBlurRadius(any())).thenThrow(RuntimeException())
+        reportFolded(true)
+        reportFolded(false)
+
+        underTest.onScreenTurningOn { readyCount++ }
+        processAll()
+
+        assertThat(readyCount).isEqualTo(1)
+        verify(innerController, atLeastOnce()).ensureOverlayRemoved()
+    }
+
+    @Test
+    fun coverReveal_timesOutWithoutScreenOn_removesOverlay() {
+        reportFolded(false)
+        reportFolded(true)
+        underTest.onScreenTurningOn {}
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_REVEAL)
+
+        scope.testScheduler.advanceTimeBy(DuoFoldOverlayAnimation.READY_TIMEOUT_MS + 1)
+        scope.testScheduler.runCurrent()
+        processAll()
+
+        verify(coverController, atLeastOnce()).ensureOverlayRemoved()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.lastCancelReason).isEqualTo("COVER_TIMEOUT")
+    }
+
+    @Test
+    fun unfoldDuringCoverReveal_cancelsCover_andUnfoldCompletesCleanly() {
+        reportFolded(false)
+        reportFolded(true)
+        underTest.onScreenTurningOn {}
+        processAll()
+        underTest.onCoverScreenOn()
+        animatorTestRule.advanceTimeBy(100)
+        processAll()
+
+        reportFolded(false)
+        assertThat(runtime.lastCancelReason).isEqualTo("UNFOLDED")
+        verify(coverController, atLeastOnce()).ensureOverlayRemoved()
+        selector.onGatedTransitionStarted(progressProvider)
+        underTest.onScreenTurningOn {}
+        processAll()
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
+
+        progressProvider.onTransitionFinished()
+        processAll()
+
+        verify(innerController, atLeastOnce()).ensureOverlayRemoved()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.overlayAttached).isFalse()
     }
 
     @Test
