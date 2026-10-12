@@ -324,6 +324,80 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
+    fun foldOnInner_startsUnblurred_soNoFlashBeforeProgress() {
+        selector.onGatedTransitionStarted(progressProvider)
+
+        progressProvider.onTransitionStarted()
+        processAll()
+
+        verify(innerController).setBackgroundBlurRadius(DuoBlurCurve.radiusFor(1f))
+        verify(innerController, never()).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+    }
+
+    @Test
+    fun unfoldNeverFinishing_safetyTimeoutRemovesOverlay() {
+        reportFolded(true)
+        reportFolded(false)
+        underTest.onScreenTurningOn {}
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
+
+        testableLooper.moveTimeForward(DuoFoldOverlayAnimation.SAFETY_TIMEOUT_MS + 1)
+        processAll()
+
+        verify(innerController, atLeastOnce()).ensureOverlayRemoved()
+        verify(innerController, atLeastOnce()).isTouchBlocked = false
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.lastCancelReason).isEqualTo("TIMEOUT")
+    }
+
+    @Test
+    fun foldNeverFinishing_safetyTimeoutRemovesOverlay() {
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.FOLDING)
+
+        testableLooper.moveTimeForward(DuoFoldOverlayAnimation.SAFETY_TIMEOUT_MS + 1)
+        processAll()
+
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.lastCancelReason).isEqualTo("TIMEOUT")
+    }
+
+    @Test
+    fun finishBeforeTimeout_recordsNoCancel() {
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        processAll()
+        progressProvider.onTransitionFinished()
+        processAll()
+
+        testableLooper.moveTimeForward(DuoFoldOverlayAnimation.SAFETY_TIMEOUT_MS + 1)
+        processAll()
+
+        assertThat(runtime.cancellations).isEqualTo(0)
+    }
+
+    @Test
+    fun foldThenSleepBeforeScreenOn_wakeDoesNotRevealCover() {
+        reportFolded(false)
+        reportFolded(true)
+        isAsleep.value = true
+        processAll()
+        isAsleep.value = false
+        processAll()
+        var ready = false
+
+        underTest.onScreenTurningOn { ready = true }
+        processAll()
+
+        assertThat(ready).isTrue()
+        verify(coverController, never()).addOverlay(any(), anyOrNull())
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+    }
+
+    @Test
     fun foldCompletes_removesInnerOverlay() {
         selector.onGatedTransitionStarted(progressProvider)
         progressProvider.onTransitionStarted()

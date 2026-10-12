@@ -158,6 +158,7 @@ constructor(
         controller: FullscreenLightRevealAnimationController,
         phase: FoldAnimationPhase,
         onOverlayReady: Runnable,
+        initialBlurPx: Int = DuoBlurCurve.MAX_BLUR_PX,
     ) {
         // The commit listener and the failure path must not both report ready.
         val reported = AtomicBoolean(false)
@@ -166,15 +167,35 @@ constructor(
         }
         try {
             controller.addOverlay(ALPHA_TRANSPARENT, readyOnce)
-            runtimeState.blurAvailable =
-                controller.setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+            runtimeState.blurAvailable = controller.setBackgroundBlurRadius(initialBlurPx)
             runtimeState.overlayAttached = true
             runtimeState.phase = phase
+            armSafetyTimeout(phase)
             log("overlay added phase=$phase blur=${runtimeState.blurAvailable}")
         } catch (e: RuntimeException) {
             controller.ensureOverlayRemoved()
             readyOnce.run()
             log("failed stage=attach exception=${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * The inner overlay blurs and blocks touch until the transition finishes; a lost finish must
+     * not leave it up. The cover reveal has its own bounds.
+     */
+    private fun armSafetyTimeout(phase: FoldAnimationPhase) {
+        bgHandler.removeCallbacks(safetyTimeout)
+        if (phase == FoldAnimationPhase.UNFOLDING || phase == FoldAnimationPhase.FOLDING) {
+            bgHandler.postDelayed(safetyTimeout, SAFETY_TIMEOUT_MS)
+        }
+    }
+
+    private val safetyTimeout = Runnable {
+        if (
+            runtimeState.phase == FoldAnimationPhase.UNFOLDING ||
+                runtimeState.phase == FoldAnimationPhase.FOLDING
+        ) {
+            cancel("TIMEOUT")
         }
     }
 
@@ -218,6 +239,7 @@ constructor(
     }
 
     private fun detach(controller: FullscreenLightRevealAnimationController) {
+        bgHandler.removeCallbacks(safetyTimeout)
         controller.ensureOverlayRemoved()
         controller.isTouchBlocked = false
         runtimeState.overlayAttached = false
@@ -226,6 +248,10 @@ constructor(
     }
 
     private fun cancel(reason: String) {
+        bgHandler.removeCallbacks(safetyTimeout)
+        // Pending flags belong to the interrupted cycle; a later wake must not replay them.
+        pendingUnfold = false
+        pendingCoverReveal = false
         coverAnimator?.cancel()
         coverWaitJob?.cancel()
         if (runtimeState.overlayAttached) runtimeState.recordCancel(reason)
@@ -243,7 +269,13 @@ constructor(
             // Folding on the inner screen: the overlay is not attached yet. A pending unfold means
             // this transition is the unfold whose screen-on has not arrived, not a fold.
             if (isDuo() && !isFolded && !pendingUnfold && !runtimeState.overlayAttached) {
-                attach(inner, FoldAnimationPhase.FOLDING, Runnable {})
+                // Progress is near 1 here, so start clear and let progress callbacks blur.
+                attach(
+                    inner,
+                    FoldAnimationPhase.FOLDING,
+                    Runnable {},
+                    DuoBlurCurve.radiusFor(1f),
+                )
                 inner.isTouchBlocked = true
             }
         }
@@ -282,7 +314,10 @@ constructor(
                     cancel("FOLDED")
                 } else if (!folded && runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
                     cancel("UNFOLDED")
+                    // The unfold this cancel interrupts is real, so its screen-on is still due.
+                    pendingUnfold = true
                 } else if (folded) {
+                    bgHandler.removeCallbacks(safetyTimeout)
                     inner.ensureOverlayRemoved()
                     runtimeState.overlayAttached = false
                     runtimeState.phase = FoldAnimationPhase.IDLE
@@ -312,5 +347,6 @@ constructor(
         private const val COVER_OVERLAY_TITLE = "yrrp-duo-cover-overlay"
         const val COVER_REVEAL_MS = 350L
         const val READY_TIMEOUT_MS = 2000L
+        const val SAFETY_TIMEOUT_MS = 5000L
     }
 }
