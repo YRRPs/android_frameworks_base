@@ -1362,7 +1362,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
     /**
      * YRRP Duo: the logical display an unfold to {@code toState} keeps lit, or null when the
-     * change is not a Duo open or a session is already running.
+     * change is not a Duo open or a session is already running. A direct snap to OPENED (skipping
+     * HALF_OPENED) is left to the stock swap: a session there would only end on its timeout.
      */
     @Nullable
     private LogicalDisplay findDuoKeepLitDisplayLocked(DeviceState toState) {
@@ -1371,17 +1372,31 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 || !isInnerPrimary(toState)) {
             return null;
         }
-        final boolean duo = mInteractive && mFoldSettingProvider.isDuoFoldAnimationActive();
+        String duo = "unread";
         LogicalDisplay keepLit = null;
-        if (mDuoDualPanel.getState() == DuoDualPanelSession.State.IDLE
-                && DuoDualPanelPolicy.keepsOutgoingLit(isInnerPrimary(mDeviceState),
-                        isInnerPrimary(toState), duo, mInteractive)) {
-            final Layout fromLayout = mDeviceStateToLayoutMap.get(mDeviceState.getIdentifier());
-            keepLit = fromLayout == null
-                    ? null : findLogicalDisplayForLayoutDefaultLocked(fromLayout);
+        final String reason;
+        if (isFullyOpened(toState)) {
+            reason = "snap-to-opened";
+        } else if (!mInteractive) {
+            reason = "not-interactive";
+        } else {
+            final boolean duoActive = mFoldSettingProvider.isDuoFoldAnimationActive();
+            duo = String.valueOf(duoActive);
+            if (!DuoDualPanelPolicy.keepsOutgoingLit(isInnerPrimary(mDeviceState),
+                    isInnerPrimary(toState), duoActive, mInteractive)) {
+                reason = "duo-off";
+            } else if (mDuoDualPanel.getState() != DuoDualPanelSession.State.IDLE) {
+                reason = "session-active";
+            } else {
+                final Layout fromLayout =
+                        mDeviceStateToLayoutMap.get(mDeviceState.getIdentifier());
+                keepLit = fromLayout == null
+                        ? null : findLogicalDisplayForLayoutDefaultLocked(fromLayout);
+                reason = keepLit == null ? "no-cover" : "armed";
+            }
         }
-        Slog.i(TAG, "YrrpDualPanel: gate duo=" + (mInteractive ? duo : "unread")
-                + " interactive=" + mInteractive + " started=" + (keepLit != null)
+        Slog.i(TAG, "YrrpDualPanel: gate duo=" + duo + " interactive=" + mInteractive
+                + " started=" + (keepLit != null) + " reason=" + reason
                 + " session=" + mDuoDualPanel.getState());
         return keepLit;
     }

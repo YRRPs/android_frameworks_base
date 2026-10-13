@@ -1791,6 +1791,28 @@ public class LogicalDisplayMapperTest {
     }
 
     @Test
+    public void duoUnfold_closedDirectlyToOpened_startsNoSession() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+
+        // A snap that skips HALF_OPENED gets the stock swap: the cover is blanked.
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_OPEN);
+        mLooper.dispatchAll();
+        assertTrue(cover.isInTransitionLocked());
+
+        devices.mOuter.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mOuter);
+
+        assertDisplayDisabled(devices.mOuter);
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mInner)));
+        mLogicalDisplayMapper.forEachLocked(
+                display -> assertFalse(display.isInTransitionLocked()));
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.State.IDLE, session.getState());
+        assertEquals(DuoDualPanelSession.NO_DISPLAY, session.getCoverDisplayId());
+    }
+
+    @Test
     public void notDuo_unfold_isUnchanged() {
         FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ false);
         LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
