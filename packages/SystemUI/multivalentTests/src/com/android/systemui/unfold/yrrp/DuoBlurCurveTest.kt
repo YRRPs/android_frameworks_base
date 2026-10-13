@@ -213,4 +213,11 @@ class DuoBlurCurveTest : SysuiTestCase() {
         assertThat(DuoBlurCurve.frontPx(1000, 0.3f, DuoBlurCurve.Anchor.RIGHT)).isEqualTo(700)
         assertThat(DuoBlurCurve.frontPx(1000, 0.3f, DuoBlurCurve.Anchor.LEFT)).isEqualTo(300)
     }
+
+    @Test
+    fun rowsFor_isBlurStripsOverTheBlurredShareOfTheWidth() {
+        val expected = DuoBlurCurve.blurStrips(1000, 800, 250f, 100, DuoBlurCurve.Anchor.RIGHT)
+        val rows = DuoBlurCurve.rowsFor(1000, 800, 0.25f, 100, DuoBlurCurve.Anchor.RIGHT)
+        assertThat(rows.map { it.toList() }).isEqualTo(expected.map { it.toList() })
+    }
 }

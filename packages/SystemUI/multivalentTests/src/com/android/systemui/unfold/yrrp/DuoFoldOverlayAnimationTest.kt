@@ -483,6 +483,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
         displayListener.onDisplayAdded(COVER_OWN_ID)
         processAll()
+        frame.completeShow(true)
         reportFolded(false)
         selector.onGatedTransitionStarted(progressProvider)
         underTest.onScreenTurningOn {}
@@ -520,6 +521,33 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(runtime.cancellations).isEqualTo(0)
     }
 
+    @Test
+    fun closingFold_doesNotStartAFakeCoverOpening() {
+        reportFolded(false)
+        underTest.onScreenTurningOn {} // the inner screen
+        processAll()
+        reportFolded(true)
+        assertThat(hinge.isListening).isFalse()
+
+        underTest.onScreenTurningOn {} // the cover screen, while the hinge is still closing
+        processAll()
+        hinge.report(15f)
+        hinge.report(5f)
+        underTest.onCoverScreenOn()
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+        hinge.report(4f)
+        processAll()
+
+        assertThat(frame.captures).isEmpty()
+        verify(coverController, times(1)).addOverlay(any(), anyOrNull(), any())
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        hinge.report(0f)
+        hinge.report(2f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+    }
+
     /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */
     private fun foldWithCoverOn() {
         reportFolded(true)
@@ -529,27 +557,20 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
         processAll()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        // The hinge is closed; that reading arms the next open.
+        hinge.report(0f)
+        processAll()
         clearInvocations(coverController)
     }
 
-    private fun innerRows(progress: Float): List<List<Float>> =
-        DuoBlurCurve.blurStrips(
-                INNER_W,
-                INNER_H,
-                INNER_W * DuoBlurCurve.innerRemaining(progress),
-                DuoBlurCurve.MAX_BLUR_PX,
-                Anchor.LEFT,
-            )
+    private fun innerRows(progress: Float): List<List<Float>> {
+        val share = DuoBlurCurve.innerRemaining(progress)
+        return DuoBlurCurve.rowsFor(INNER_W, INNER_H, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
             .map { it.toList() }
+    }
 
-    private fun coverRevealRows(blurredShare: Float): List<List<Float>> =
-        DuoBlurCurve.blurStrips(
-                COVER_W,
-                COVER_H,
-                COVER_W * blurredShare,
-                DuoBlurCurve.MAX_BLUR_PX,
-                Anchor.RIGHT,
-            )
+    private fun coverRevealRows(share: Float): List<List<Float>> =
+        DuoBlurCurve.rowsFor(COVER_W, COVER_H, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
             .map { it.toList() }
 
     private fun allRegions(
@@ -593,7 +614,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
     private fun captureDisplayListener(): DisplayManager.DisplayListener {
         val captor = argumentCaptor<DisplayManager.DisplayListener>()
-        verify(displayManager).registerDisplayListener(captor.capture(), any<Handler>())
+        verify(displayManager).registerDisplayListener(captor.capture(), any<Handler>(), any())
         return captor.firstValue
     }
 

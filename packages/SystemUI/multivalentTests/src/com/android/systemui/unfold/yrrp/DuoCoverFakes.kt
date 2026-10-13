@@ -18,6 +18,7 @@ package com.android.systemui.unfold.yrrp
 
 import android.hardware.display.DisplayManagerGlobal
 import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import android.view.DisplayAdjustments
 import android.view.DisplayInfo
@@ -38,8 +39,8 @@ object DuoTestPanels {
     val PANELS = DuoPanels(COVER_W, COVER_H, INNER_W, INNER_H)
 }
 
-/** A hinge source that hands angles to the test instead of a sensor. */
-class FakeHingeSource(handler: Handler) : CoverHingeAngleSource(mock(), handler) {
+/** A hinge source that hands angles to the test instead of a sensor; bg-only like the real one. */
+class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock(), handler) {
     var startResult = true
     var starts = 0
     private var onAngle: ((Float) -> Unit)? = null
@@ -48,12 +49,14 @@ class FakeHingeSource(handler: Handler) : CoverHingeAngleSource(mock(), handler)
         get() = onAngle != null
 
     override fun start(onAngle: (Float) -> Unit): Boolean {
+        checkOnLooper(handler)
         starts++
         this.onAngle = if (startResult) onAngle else null
         return startResult
     }
 
     override fun stop() {
+        checkOnLooper(handler)
         onAngle = null
     }
 
@@ -62,15 +65,24 @@ class FakeHingeSource(handler: Handler) : CoverHingeAngleSource(mock(), handler)
     }
 }
 
-/** A cover frame that records calls and shows at once. */
-class FakeCoverFrame(handler: Handler, logBuffer: LogBuffer) :
+/**
+ * A cover frame with the real contract: capture, show and release each start a new generation;
+ * [show] keeps its callback until [completeShow], which reports only for the current request.
+ * Regions apply only once a show has succeeded.
+ */
+class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     DuoCoverFrame(mock(), Optional.empty(), handler, logBuffer) {
     val captures = mutableListOf<Int>()
     val shows = mutableListOf<Triple<Int, Int, Int>>()
     val regions = mutableListOf<List<FloatArray>>()
     var releases = 0
+    private var generation = 0
+    private var pending: Pair<Int, (Boolean) -> Unit>? = null
+    private var shownGeneration = -1
 
     override fun capture(fromDisplayId: Int): Boolean {
+        checkOnLooper(handler)
+        generation++
         captures += fromDisplayId
         return true
     }
@@ -81,25 +93,49 @@ class FakeCoverFrame(handler: Handler, logBuffer: LogBuffer) :
         heightPx: Int,
         onShown: (Boolean) -> Unit,
     ) {
+        checkOnLooper(handler)
+        generation++
         shows += Triple(targetDisplayId, widthPx, heightPx)
-        onShown(true)
+        pending = generation to onShown
+    }
+
+    /** Finishes the latest show; a superseded one never reports. */
+    fun completeShow(ok: Boolean) {
+        val (requested, onShown) = pending ?: return
+        pending = null
+        if (requested != generation) return
+        if (ok) shownGeneration = requested
+        onShown(ok)
     }
 
     override fun setBlurRegions(regions: List<FloatArray>): Boolean {
+        checkOnLooper(handler)
+        if (shownGeneration != generation) return false
         this.regions += regions
         return true
     }
 
     override fun release() {
+        checkOnLooper(handler)
+        generation++
         releases++
     }
 }
 
-/** A real internal Display over a mocked [global], as FaceScanningProviderFactoryTest does. */
-fun fakeInternalDisplay(global: DisplayManagerGlobal, id: Int, width: Int, height: Int): Display {
+private fun checkOnLooper(handler: Handler) =
+    check(Looper.myLooper() == handler.looper) { "must run on the @UnfoldBg handler" }
+
+/** A real Display over a mocked [global], as FaceScanningProviderFactoryTest does. */
+fun fakeInternalDisplay(
+    global: DisplayManagerGlobal,
+    id: Int,
+    width: Int,
+    height: Int,
+    displayType: Int = Display.TYPE_INTERNAL,
+): Display {
     val info =
         DisplayInfo().apply {
-            type = Display.TYPE_INTERNAL
+            type = displayType
             logicalWidth = width
             logicalHeight = height
             rotation = 0
@@ -112,13 +148,7 @@ fun fakeInternalDisplay(global: DisplayManagerGlobal, id: Int, width: Int, heigh
 fun coverOpeningRows(angle: Float): List<List<Float>> {
     val coverage = DuoBlurCurve.coverCoverage(angle / DuoBlurCurve.OPEN_ANGLE_DEGREES)
     val maxBlurPx = Math.round(DuoBlurCurve.MAX_BLUR_PX * coverage)
-    val w = DuoTestPanels.COVER_W
-    return DuoBlurCurve.blurStrips(
-            w,
-            DuoTestPanels.COVER_H,
-            w * coverage,
-            maxBlurPx,
-            DuoBlurCurve.Anchor.RIGHT,
-        )
+    val (w, h) = DuoTestPanels.COVER_W to DuoTestPanels.COVER_H
+    return DuoBlurCurve.rowsFor(w, h, coverage, maxBlurPx, DuoBlurCurve.Anchor.RIGHT)
         .map { it.toList() }
 }

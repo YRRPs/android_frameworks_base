@@ -86,7 +86,8 @@ constructor(
 
     private lateinit var inner: FullscreenLightRevealAnimationController
     private lateinit var cover: FullscreenLightRevealAnimationController
-    private var panels = DuoPanels(0, 0, 0, 0)
+    private var panels = DuoPanels.NONE
+    private var foldKnown = false
     private var isFolded = false
     private var pendingUnfold = false
     private var pendingCoverReveal = false
@@ -151,7 +152,11 @@ constructor(
         when {
             unfold && isDuo() -> startUnfold(onOverlayReady)
             coverReveal && isDuo() -> startCoverReveal(onOverlayReady)
-            else -> onOverlayReady.run()
+            else -> {
+                // A cover opening started under Duo does not carry into another style's unfold.
+                if (unfold) coverOpening.cancel("STYLE")
+                onOverlayReady.run()
+            }
         }
     }
 
@@ -164,6 +169,8 @@ constructor(
 
     private fun startCoverReveal(onOverlayReady: Runnable) {
         coverBlurredShare = 1f
+        // The reveal owns the cover overlay; a cover opening left from before the fold must go.
+        coverOpening.cancel("COVER_REVEAL")
         attach(cover, FoldAnimationPhase.COVER_REVEAL, onOverlayReady)
         coverWaitJob?.cancel()
         coverWaitJob =
@@ -230,11 +237,11 @@ constructor(
      */
     private fun armSafetyTimeout(phase: FoldAnimationPhase) {
         bgHandler.removeCallbacks(safetyTimeout)
-        if (phase in TIMED_PHASES) bgHandler.postDelayed(safetyTimeout, SAFETY_TIMEOUT_MS)
+        if (phase in INNER_PHASES) bgHandler.postDelayed(safetyTimeout, SAFETY_TIMEOUT_MS)
     }
 
     private val safetyTimeout = Runnable {
-        if (runtimeState.phase in TIMED_PHASES) cancel("TIMEOUT")
+        if (runtimeState.phase in INNER_PHASES) cancel("TIMEOUT")
     }
 
     /** Runs the timed cover-screen clear once the cover panel is on. */
@@ -256,8 +263,8 @@ constructor(
         // animatedFraction is already eased by the decelerate interpolator.
         coverBlurredShare = 1f - animatedFraction
         val (w, h) = panels.coverW to panels.coverH
-        val blurred = w * coverBlurredShare
-        val rows = DuoBlurCurve.blurStrips(w, h, blurred, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
+        val share = coverBlurredShare
+        val rows = DuoBlurCurve.rowsFor(w, h, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
         runtimeState.blurAvailable = cover.setBlurRegions(rows)
     }
 
@@ -325,16 +332,11 @@ constructor(
         }
 
         override fun onTransitionProgress(progress: Float) = onBg {
-            if (
-                runtimeState.phase != FoldAnimationPhase.UNFOLDING &&
-                    runtimeState.phase != FoldAnimationPhase.FOLDING
-            ) {
-                return@onBg
-            }
+            if (runtimeState.phase !in INNER_PHASES) return@onBg
             lastInnerProgress = progress
             val (w, h) = panels.innerW to panels.innerH
-            val blurred = w * DuoBlurCurve.innerRemaining(progress)
-            val rows = DuoBlurCurve.blurStrips(w, h, blurred, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
+            val share = DuoBlurCurve.innerRemaining(progress)
+            val rows = DuoBlurCurve.rowsFor(w, h, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
             // Retry every callback: the first apply can precede a valid surface.
             runtimeState.blurAvailable = inner.setBlurRegions(rows)
             inner.isTouchBlocked =
@@ -343,12 +345,7 @@ constructor(
         }
 
         override fun onTransitionFinished() = onBg {
-            if (
-                runtimeState.phase == FoldAnimationPhase.UNFOLDING ||
-                    runtimeState.phase == FoldAnimationPhase.FOLDING
-            ) {
-                detach(inner)
-            }
+            if (runtimeState.phase in INNER_PHASES) detach(inner)
             coverOpening.onUnfoldFinished()
         }
     }
@@ -357,7 +354,9 @@ constructor(
         DeviceStateManager.FoldStateListener(context, Consumer { onFoldChanged(it) })
 
     private fun onFoldChanged(folded: Boolean) {
-        if (folded == isFolded) return
+        // The first report goes through: the cover opening needs the initial fold state.
+        if (foldKnown && folded == isFolded) return
+        foldKnown = true
         if (folded && runtimeState.phase == FoldAnimationPhase.UNFOLDING) {
             cancel("FOLDED")
         } else if (!folded && runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
@@ -391,7 +390,8 @@ constructor(
         private const val TAG = "YrrpFoldAnimation"
         private const val INNER_OVERLAY_TITLE = "yrrp-duo-unfold-overlay"
         private const val COVER_OVERLAY_TITLE = "yrrp-duo-cover-overlay"
-        private val TIMED_PHASES = setOf(FoldAnimationPhase.UNFOLDING, FoldAnimationPhase.FOLDING)
+        /** The inner overlay's phases; only they have the safety timeout. */
+        private val INNER_PHASES = setOf(FoldAnimationPhase.UNFOLDING, FoldAnimationPhase.FOLDING)
         const val COVER_REVEAL_MS = 350L
         const val READY_TIMEOUT_MS = 2000L
         const val SAFETY_TIMEOUT_MS = 5000L

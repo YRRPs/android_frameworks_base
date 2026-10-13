@@ -138,6 +138,15 @@ object DuoBlurCurve {
         return rows
     }
 
+    /** [blurStrips] over [blurredShare] of [widthPx], at the default edge. */
+    fun rowsFor(
+        widthPx: Int,
+        heightPx: Int,
+        blurredShare: Float,
+        maxBlurPx: Int,
+        anchor: Anchor,
+    ): List<FloatArray> = blurStrips(widthPx, heightPx, widthPx * blurredShare, maxBlurPx, anchor)
+
     private fun requireValidEdge(edgeStrips: Int, edgeWidthFraction: Float) {
         require(edgeStrips > 0) { "edgeStrips must be positive: $edgeStrips" }
         require(edgeWidthFraction > 0f && edgeWidthFraction <= 1f) {

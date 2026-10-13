@@ -23,10 +23,12 @@ import android.view.DisplayInfo
 /**
  * Natural sizes of the two Duo panels, chosen the way the overlay controllers choose their
  * displays: among internal displays, including disabled ones, the narrowest is the cover and the
- * widest is the inner screen. All zero when no internal display is known.
+ * widest is the inner screen. [NONE] when no internal display is known.
  */
 data class DuoPanels(val coverW: Int, val coverH: Int, val innerW: Int, val innerH: Int) {
     companion object {
+        val NONE = DuoPanels(0, 0, 0, 0)
+
         fun read(displayManager: DisplayManager): DuoPanels {
             val internal =
                 displayManager

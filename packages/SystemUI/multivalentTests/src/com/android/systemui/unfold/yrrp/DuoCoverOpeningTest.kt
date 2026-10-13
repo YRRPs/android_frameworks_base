@@ -33,6 +33,7 @@ import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
 import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_H
 import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_OWN_ID
 import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_W
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_W
 import com.android.systemui.unfold.yrrp.DuoTestPanels.PANELS
 import com.google.common.truth.Truth.assertThat
 import java.io.PrintWriter
@@ -78,8 +79,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         whenever(cover.setBlurRegions(any())).thenReturn(true)
         whenever(cover.isBlurAvailable()).thenReturn(true)
         whenever(powerInteractor.screenPowerState).thenReturn(screenPowerState)
-        whenever(displayManager.getDisplay(COVER_OWN_ID))
-            .thenReturn(fakeInternalDisplay(displayGlobal, COVER_OWN_ID, COVER_W, COVER_H))
+        stubDisplay(COVER_OWN_ID, COVER_W)
         selector.onSettingChanged(FoldAnimationStyle.DUO)
         underTest =
             DuoCoverOpening(
@@ -96,11 +96,10 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
-    fun coverAngle_whileFoldedScreenOnDuo_attachesCoverWithRightAnchoredRows() {
+    fun openFromClosed_attachesCoverWithRightAnchoredRows() {
         startFolded()
 
-        hinge.report(30f)
-        processAll()
+        openTo(30f)
 
         verify(cover).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(0))
         assertThat(frame.captures).containsExactly(Display.DEFAULT_DISPLAY)
@@ -113,10 +112,21 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
+    fun closingReadingsAfterAFold_neverStartAnOpen() {
+        startFolded()
+
+        listOf(15f, 10f, 5f).forEach { hinge.report(it) }
+        processAll()
+
+        verify(cover, never()).addOverlay(any(), anyOrNull(), any())
+        assertThat(frame.captures).isEmpty()
+        assertThat(underTest.isActive).isFalse()
+    }
+
+    @Test
     fun hingeBackToZero_releasesTheCover() {
         startFolded()
-        hinge.report(3f)
-        processAll()
+        openTo(3f)
 
         hinge.report(0f)
         processAll()
@@ -128,18 +138,22 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
-    fun coverOwnDisplayAppearing_movesTheBlurToTheFrame() {
+    fun coverOwnDisplay_movesTheBlurToTheFrameOnceShown() {
         val displays = startFolded()
-        hinge.report(30f)
-        processAll()
+        openTo(30f)
         clearInvocations(cover)
 
         displays.onDisplayAdded(COVER_OWN_ID)
         processAll()
-
         assertThat(frame.shows).containsExactly(Triple(COVER_OWN_ID, COVER_W, COVER_H))
-        verify(cover, atLeastOnce()).ensureOverlayRemoved()
+        verify(cover).ensureOverlayRemoved()
+        assertThat(runtime.overlayAttached).isFalse()
+        assertThat(runtime.dualPanel).isFalse()
+
+        frame.completeShow(true)
+        // What the dump reads after the move.
         assertThat(runtime.dualPanel).isTrue()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
         assertThat(frame.regions.last().map { it.toList() }).isEqualTo(coverOpeningRows(30f))
 
         hinge.report(60f)
@@ -151,10 +165,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     @Test
     fun coverOwnDisplayRemoved_releasesTheFrame() {
         val displays = startFolded()
-        hinge.report(30f)
-        processAll()
-        displays.onDisplayAdded(COVER_OWN_ID)
-        processAll()
+        moveToOwnDisplay(displays)
 
         displays.onDisplayRemoved(COVER_OWN_ID)
         processAll()
@@ -166,20 +177,142 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
-    fun unfoldWithoutOwnDisplay_dropsCoverOverlayAtInnerStart_andReleasesAtFinish() {
-        startFolded()
-        hinge.report(30f)
-        processAll()
-        clearInvocations(cover)
-        underTest.onFoldChanged(false)
+    fun unrelatedRemoval_isIgnored() {
+        val displays = startFolded()
+        moveToOwnDisplay(displays)
 
+        displays.onDisplayRemoved(7)
+        processAll()
+
+        assertThat(frame.releases).isEqualTo(0)
+        assertThat(runtime.dualPanel).isTrue()
+    }
+
+    @Test
+    fun nonCoverDisplays_areIgnored() {
+        stubDisplay(7, INNER_W)
+        stubDisplay(8, COVER_W, Display.TYPE_EXTERNAL)
+        val displays = startFolded()
+        openTo(30f)
+
+        listOf(Display.DEFAULT_DISPLAY, 7, 8).forEach { displays.onDisplayAdded(it) }
+        processAll()
+
+        assertThat(frame.shows).isEmpty()
+        assertThat(dumpedLog()).contains("cover display rejected id=7")
+        assertThat(dumpedLog()).contains("cover display rejected id=8")
+    }
+
+    @Test
+    fun displayAfterTheInnerUnfoldStarts_handsTheBlurToTheFrame() {
+        val displays = startFolded()
+        openTo(30f)
+        underTest.onFoldChanged(false)
         underTest.onInnerUnfoldStarted()
-        verify(cover).ensureOverlayRemoved()
+        // The inner overlay owns the phase and blurAvailable from here.
+        runtime.phase = FoldAnimationPhase.UNFOLDING
+        whenever(cover.isBlurAvailable()).thenReturn(false)
+        clearInvocations(cover)
+
+        hinge.report(45f)
+        processAll()
+        verify(cover, never()).setBlurRegions(any())
+        assertThat(runtime.blurAvailable).isTrue()
+
+        whenever(cover.isBlurAvailable()).thenReturn(true)
+        displays.onDisplayAdded(COVER_OWN_ID)
+        frame.completeShow(true)
+        processAll()
+        assertThat(frame.regions.last().map { it.toList() }).isEqualTo(coverOpeningRows(45f))
+        verify(cover, never()).setBlurRegions(any())
+    }
+
+    @Test
+    fun unfoldWithoutOwnDisplay_releasesAtFinish() {
+        startFolded()
+        openTo(30f)
+        underTest.onFoldChanged(false)
+        underTest.onInnerUnfoldStarted()
         assertThat(hinge.isListening).isTrue()
 
         underTest.onUnfoldFinished()
+
         assertThat(frame.releases).isEqualTo(1)
         assertThat(underTest.isActive).isFalse()
+        assertThat(hinge.isListening).isFalse()
+    }
+
+    @Test
+    fun cancelWhileShowPending_leavesDualPanelFalse_andNoFrameBlur() {
+        val displays = startFolded()
+        openTo(30f)
+        displays.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+
+        underTest.cancel("TEST")
+        frame.completeShow(true)
+
+        assertThat(runtime.dualPanel).isFalse()
+        assertThat(frame.regions).isEmpty()
+    }
+
+    @Test
+    fun failedShow_cancelsTheOpen() {
+        val displays = startFolded()
+        openTo(30f)
+        displays.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+
+        frame.completeShow(false)
+
+        assertThat(underTest.isActive).isFalse()
+        assertThat(frame.releases).isEqualTo(1)
+        assertThat(runtime.dualPanel).isFalse()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(dumpedLog()).contains("cover frame failed")
+    }
+
+    @Test
+    fun foldWhileOnOwnDisplay_releases() {
+        val displays = startFolded()
+        moveToOwnDisplay(displays)
+        underTest.onFoldChanged(false)
+
+        underTest.onFoldChanged(true)
+
+        assertThat(frame.releases).isEqualTo(1)
+        assertThat(underTest.isActive).isFalse()
+        assertThat(runtime.dualPanel).isFalse()
+    }
+
+    @Test
+    fun foldFromTheInnerScreen_waitsForTheCoversOwnScreenOn() {
+        startUnfolded()
+
+        underTest.onFoldChanged(true)
+        assertThat(hinge.isListening).isFalse()
+        hinge.report(4f)
+
+        underTest.onScreenChanged(true)
+        assertThat(hinge.isListening).isTrue()
+        hinge.report(4f)
+        processAll()
+        assertThat(underTest.isActive).isFalse()
+        openTo(2f)
+        assertThat(underTest.isActive).isTrue()
+    }
+
+    @Test
+    fun styleSwitchMidOpen_cancels() {
+        startFolded()
+        openTo(30f)
+
+        selector.onSettingChanged(FoldAnimationStyle.PIXEL)
+        underTest.onStyleChanged()
+
+        assertThat(underTest.isActive).isFalse()
+        assertThat(frame.releases).isEqualTo(1)
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
         assertThat(hinge.isListening).isFalse()
     }
 
@@ -190,18 +323,20 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         startFolded()
 
         assertThat(hinge.starts).isEqualTo(1)
-        val out = StringWriter()
-        logBuffer.dump(PrintWriter(out), 0)
-        assertThat(out.toString()).contains("cover hinge unavailable")
+        assertThat(dumpedLog()).contains("cover hinge unavailable")
     }
 
     @Test
-    fun screenAlreadyOnAtInit_listensOnceFolded() {
+    fun screenOnAtInit_listensWithoutAScreenTurningOn() {
+        // A SystemUI restart with the cover on: the first fold report is folded and no
+        // onScreenChanged ever arrives.
         screenPowerState.value = ScreenPowerState.SCREEN_ON
 
         startFolded()
 
         assertThat(hinge.isListening).isTrue()
+        openTo(30f)
+        assertThat(underTest.isActive).isTrue()
     }
 
     @Test
@@ -215,14 +350,39 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         assertThat(hinge.isListening).isTrue()
     }
 
-    /** Inits with the cover controller and folds; returns the registered display listener. */
-    private fun startFolded(): DisplayManager.DisplayListener {
+    /** Inits and reports folded first; returns the registered display listener. */
+    private fun startFolded(): DisplayManager.DisplayListener = start(folded = true)
+
+    private fun startUnfolded(): DisplayManager.DisplayListener = start(folded = false)
+
+    private fun start(folded: Boolean): DisplayManager.DisplayListener {
         underTest.init(cover, PANELS)
-        underTest.onFoldChanged(true)
+        underTest.onFoldChanged(folded)
         processAll()
         val captor = argumentCaptor<DisplayManager.DisplayListener>()
-        verify(displayManager).registerDisplayListener(captor.capture(), any<Handler>())
+        val events =
+            DisplayManager.EVENT_TYPE_DISPLAY_ADDED or DisplayManager.EVENT_TYPE_DISPLAY_REMOVED
+        verify(displayManager).registerDisplayListener(captor.capture(), any<Handler>(), eq(events))
         return captor.firstValue
+    }
+
+    /** A closed reading arms the sequence; [angle] then opens. */
+    private fun openTo(angle: Float) {
+        hinge.report(0f)
+        hinge.report(angle)
+        processAll()
+    }
+
+    private fun moveToOwnDisplay(displays: DisplayManager.DisplayListener) {
+        openTo(30f)
+        displays.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+        frame.completeShow(true)
+    }
+
+    private fun stubDisplay(id: Int, width: Int, type: Int = Display.TYPE_INTERNAL) {
+        whenever(displayManager.getDisplay(id))
+            .thenReturn(fakeInternalDisplay(displayGlobal, id, width, COVER_H, type))
     }
 
     private fun lastCoverRegions(): List<List<Float>> {
@@ -230,6 +390,9 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         verify(cover, atLeastOnce()).setBlurRegions(captor.capture())
         return captor.lastValue.map { it.toList() }
     }
+
+    private fun dumpedLog(): String =
+        StringWriter().also { logBuffer.dump(PrintWriter(it), 0) }.toString()
 
     private fun processAll() = testableLooper.processAllMessages()
 }
