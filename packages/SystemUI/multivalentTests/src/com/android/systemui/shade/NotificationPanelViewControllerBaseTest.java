@@ -44,6 +44,7 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.MotionEvent;
@@ -159,6 +160,7 @@ import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
 import com.android.systemui.statusbar.policy.data.repository.FakeUserSetupRepository;
 import com.android.systemui.unfold.SysUIUnfoldComponent;
+import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.user.domain.interactor.UserSwitcherInteractor;
 import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.util.time.FakeSystemClock;
@@ -524,7 +526,8 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 mStatusBarStateController,
                 mNotificationShadeWindowController,
                 mDozeLog, mDozeParameters, mCommandQueue, mVibratorHelper,
-                mLatencyTracker, mPowerManager, mAccessibilityManager, 0, mUpdateMonitor,
+                mLatencyTracker, mContext.getSystemService(PowerManager.class),
+                mAccessibilityManager, 0, mUpdateMonitor,
                 mMetricsLogger,
                 mShadeLog,
                 mConfigurationController,
@@ -655,7 +658,8 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 new ResourcesSplitShadeStateController(),
                 () -> mKosmos.getCommunalTransitionViewModel(),
                 () -> mLargeScreenHeaderHelper,
-                mWindowManagerProvider
+                mWindowManagerProvider,
+                mock(SelectedUserInteractor.class)
         );
     }
 
