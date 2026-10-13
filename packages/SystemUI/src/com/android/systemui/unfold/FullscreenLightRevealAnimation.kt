@@ -166,6 +166,23 @@ constructor(
         return true
     }
 
+    /**
+     * Blurs only the given regions below the overlay window, replacing any earlier regions and
+     * clearing the uniform blur. Rows are BlurRegion#toFloatArray rows. Returns false when no
+     * overlay is attached or cross-window blur is unavailable. An empty array clears the blur.
+     */
+    fun setBlurRegions(regions: Array<FloatArray>): Boolean {
+        ensureInBackground()
+        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
+        if (!surface.isValid) return false
+        if (regions.isNotEmpty() && !isBlurAvailable()) return false
+        SurfaceControl.Transaction()
+            .setBackgroundBlurRadius(surface, 0)
+            .setBlurRegions(surface, regions)
+            .apply()
+        return true
+    }
+
     /** Whether cross-window blur is on now; Battery Saver and thermal limits turn it off. */
     fun isBlurAvailable(): Boolean =
         context.getSystemService(WindowManager::class.java)!!.isCrossWindowBlurEnabled
