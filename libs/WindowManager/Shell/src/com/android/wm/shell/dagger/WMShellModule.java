@@ -838,11 +838,9 @@ public abstract class WMShellModule {
             Context context,
             UnfoldBackgroundController unfoldBackgroundController,
             ShellController shellController,
-            DisplayInsetsController displayInsetsController,
-            Optional<UnfoldAnimationStyleProvider> styleProvider) {
+            DisplayInsetsController displayInsetsController) {
         return new FullscreenUnfoldTaskAnimator(
-                context, unfoldBackgroundController, shellController, displayInsetsController,
-                styleProvider);
+                context, unfoldBackgroundController, shellController, displayInsetsController);
     }
 
     @Provides
