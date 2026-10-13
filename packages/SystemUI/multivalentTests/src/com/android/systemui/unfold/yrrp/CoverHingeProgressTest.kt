@@ -19,6 +19,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -39,6 +40,7 @@ class CoverHingeProgressTest : SysuiTestCase() {
     fun angleMapsLinearlyToProgress_clamped() {
         assertThat(progress.progressFor(0f)).isEqualTo(0f)
         assertThat(progress.progressFor(82.5f)).isEqualTo(0.5f)
+        assertThat(progress.progressFor(165f)).isEqualTo(1f)
         assertThat(progress.progressFor(200f)).isEqualTo(1f)
         assertThat(progress.progressFor(-3f)).isEqualTo(0f)
     }
@@ -47,6 +49,13 @@ class CoverHingeProgressTest : SysuiTestCase() {
     fun startsOnlyWhenTheHingeLeavesZero() {
         assertThat(progress.hasLeftClosed(0f)).isFalse()
         assertThat(progress.hasLeftClosed(0.4f)).isFalse()
+        assertThat(progress.hasLeftClosed(0.99f)).isFalse()
+        assertThat(progress.hasLeftClosed(-1f)).isFalse()
         assertThat(progress.hasLeftClosed(1f)).isTrue()
+    }
+
+    @Test
+    fun rejectsANonPositiveOpenAngle() {
+        assertThrows(IllegalArgumentException::class.java) { CoverHingeProgress(0f) }
     }
 }

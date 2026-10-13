@@ -155,32 +155,39 @@ constructor(
 
     /**
      * Blurs everything below the overlay window. Returns false when no overlay is attached or
-     * cross-window blur is unavailable (for example under Battery Saver).
+     * cross-window blur is unavailable (for example under Battery Saver). Each mode replaces the
+     * other: a surface holds either one uniform blur or regions.
      */
     fun setBackgroundBlurRadius(radiusPx: Int): Boolean {
-        ensureInBackground()
-        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
-        if (!surface.isValid) return false
-        if (radiusPx > 0 && !isBlurAvailable()) return false
-        SurfaceControl.Transaction().setBackgroundBlurRadius(surface, radiusPx).apply()
+        val surface = blurSurfaceOrNull(addsBlur = radiusPx > 0) ?: return false
+        SurfaceControl.Transaction()
+            .setBlurRegions(surface, emptyArray())
+            .setBackgroundBlurRadius(surface, radiusPx)
+            .apply()
         return true
     }
 
     /**
-     * Blurs only the given regions below the overlay window, replacing any earlier regions and
-     * clearing the uniform blur. Rows are BlurRegion#toFloatArray rows. Returns false when no
-     * overlay is attached or cross-window blur is unavailable. An empty array clears the blur.
+     * Blurs only the given regions below the overlay window. Rows are BlurRegion#toFloatArray
+     * rows. An empty list clears the blur. Each mode replaces the other: a surface holds either
+     * one uniform blur or regions. Returns false and leaves the previous blur unchanged when
+     * nothing can be applied (no overlay attached, or cross-window blur unavailable).
      */
-    fun setBlurRegions(regions: Array<FloatArray>): Boolean {
-        ensureInBackground()
-        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
-        if (!surface.isValid) return false
-        if (regions.isNotEmpty() && !isBlurAvailable()) return false
+    fun setBlurRegions(regions: List<FloatArray>): Boolean {
+        val surface = blurSurfaceOrNull(addsBlur = regions.isNotEmpty()) ?: return false
         SurfaceControl.Transaction()
             .setBackgroundBlurRadius(surface, 0)
-            .setBlurRegions(surface, regions)
+            .setBlurRegions(surface, regions.toTypedArray())
             .apply()
         return true
+    }
+
+    private fun blurSurfaceOrNull(addsBlur: Boolean): SurfaceControl? {
+        ensureInBackground()
+        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return null
+        if (!surface.isValid) return null
+        if (addsBlur && !isBlurAvailable()) return null
+        return surface
     }
 
     /** Whether cross-window blur is on now; Battery Saver and thermal limits turn it off. */

@@ -20,14 +20,16 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
+import android.os.Looper
 import com.android.systemui.unfold.dagger.UnfoldBg
 import javax.inject.Inject
 
 /**
- * Reports the hinge angle while [start] is in effect. Registers TYPE_HINGE_ANGLE on the unfold
- * background handler, so callbacks arrive on the same thread as unfold progress.
+ * Reports the hinge angle while [start] is in effect. Registers TYPE_HINGE_ANGLE on the
+ * @UnfoldBg handler, so all calls and callbacks run on the @UnfoldBg handler thread. Open for
+ * tests.
  */
-open class CoverHingeAngleSource // open for tests
+open class CoverHingeAngleSource
 @Inject
 constructor(
     private val sensorManager: SensorManager,
@@ -38,23 +40,40 @@ constructor(
     open val isListening: Boolean
         get() = listener != null
 
-    /** Starts reporting angles to [onAngle]; a second call replaces the callback. */
-    open fun start(onAngle: (Float) -> Unit) {
+    /**
+     * Starts reporting angles to [onAngle]; a second call replaces the callback. Returns false
+     * when the hinge sensor is missing or registration fails, in which case nothing is
+     * listening.
+     */
+    open fun start(onAngle: (Float) -> Unit): Boolean {
+        ensureOnBg()
         stop()
-        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_HINGE_ANGLE) ?: return
+        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_HINGE_ANGLE) ?: return false
         val newListener =
             object : SensorEventListener {
-                override fun onSensorChanged(event: SensorEvent) = onAngle(event.values[0])
+                override fun onSensorChanged(event: SensorEvent) {
+                    // Ignore events queued before stop() or a replacing start().
+                    if (listener === this) onAngle(event.values[0])
+                }
 
                 override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
             }
-        sensorManager.registerListener(
-            newListener, sensor, SensorManager.SENSOR_DELAY_FASTEST, bgHandler)
+        val registered =
+            sensorManager.registerListener(
+                newListener, sensor, SensorManager.SENSOR_DELAY_FASTEST, bgHandler)
+        if (!registered) return false
         listener = newListener
+        return true
     }
 
     open fun stop() {
+        ensureOnBg()
         listener?.let { sensorManager.unregisterListener(it) }
         listener = null
     }
+
+    private fun ensureOnBg() =
+        check(Looper.myLooper() == bgHandler.looper) {
+            "CoverHingeAngleSource must be used on the @UnfoldBg handler"
+        }
 }
