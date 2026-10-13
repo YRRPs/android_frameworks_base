@@ -115,6 +115,8 @@ class FakeHomeStatusBarViewModel(
 
     override val shouldShowOperatorNameView = MutableStateFlow(false)
 
+    override val hideStartSideContentForHeadsUp = MutableStateFlow(false)
+
     override val isClockVisible =
         MutableStateFlow(VisibilityModel(visibility = View.GONE, shouldAnimateChange = false))
 
