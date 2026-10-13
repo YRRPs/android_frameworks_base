@@ -131,8 +131,30 @@ class DuoBlurCurveTest : SysuiTestCase() {
     fun strips_noZeroWidthRemainderFromFloatBuildUp() {
         val exactEdge = strips(1080 * 0.6f, DuoBlurCurve.Anchor.RIGHT, 7, widthPx = 1080)
         assertThat(exactEdge).hasSize(7)
-        val sliver = strips(600.0001f, DuoBlurCurve.Anchor.RIGHT, 4, maxBlurPx = 200)
+        val sliver = strips(600.0001f, DuoBlurCurve.Anchor.RIGHT, 4)
         assertThat(sliver).hasSize(4)
+    }
+
+    @Test
+    fun strips_trailingSliverExtendsTheLastRowToTheEdge() {
+        val right = strips(150.3f, DuoBlurCurve.Anchor.RIGHT, 4)
+        assertThat(right).hasSize(1)
+        assertThat(right[0][4]).isEqualTo(1000f)
+        val left = strips(150.3f, DuoBlurCurve.Anchor.LEFT, 4)
+        assertThat(left).hasSize(1)
+        assertThat(left[0][2]).isEqualTo(0f)
+    }
+
+    @Test
+    fun strips_tinyStripsAreMergedIntoThePreviousRow() {
+        // Strips of 0.25 px: the first four merge into one row of 1 px, then the full region.
+        val rows = DuoBlurCurve.blurStrips(
+            1000, 2000, 100f, 200, DuoBlurCurve.Anchor.RIGHT,
+            edgeStrips = 4, edgeWidthFraction = 0.001f,
+        )
+        assertThat(rows).hasSize(2)
+        assertThat(rows[0][4]).isWithin(1e-3f).of(rows[1][2])
+        assertThat(rows[1][4]).isEqualTo(1000f)
     }
 
     @Test
@@ -155,6 +177,8 @@ class DuoBlurCurveTest : SysuiTestCase() {
         assertThat(strips(-5f, DuoBlurCurve.Anchor.RIGHT, 4)).isEmpty()
         assertThat(strips(500f, DuoBlurCurve.Anchor.RIGHT, 4, widthPx = -1)).isEmpty()
         assertThat(strips(500f, DuoBlurCurve.Anchor.RIGHT, 4, maxBlurPx = 0)).isEmpty()
+        val noHeight = DuoBlurCurve.blurStrips(1000, 0, 500f, 200, DuoBlurCurve.Anchor.RIGHT)
+        assertThat(noHeight).isEmpty()
     }
 
     @Test

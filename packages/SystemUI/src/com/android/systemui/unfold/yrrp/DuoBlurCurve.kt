@@ -71,8 +71,10 @@ object DuoBlurCurve {
      * The soft edge starts at the front and ramps radius and alpha, from 1/[edgeStrips] of
      * [maxBlurPx] up to the full value, over [edgeWidthFraction] of the width in [edgeStrips]
      * adjacent strips; the ramp is cut short when the blurred share is narrower than the edge.
-     * The rest of the blurred share is one full-strength region. Regions under [MIN_REGION_PX]
-     * wide are dropped.
+     * The rest of the blurred share is one full-strength region. The rows always cover the
+     * blurred share exactly: a trailing remainder or a strip narrower than [MIN_REGION_PX] is
+     * merged into the previous row by extending it outward (to the surface edge at the end), and
+     * a blurred share narrower than [MIN_REGION_PX] yields no rows.
      *
      * [edgeStrips] and [edgeWidthFraction] are tuning hooks (tests now, Duo tuning settings
      * later), so this keeps seven parameters and they stay explicit.
@@ -86,11 +88,10 @@ object DuoBlurCurve {
         edgeStrips: Int = EDGE_STRIPS,
         edgeWidthFraction: Float = EDGE_WIDTH_FRACTION,
     ): List<FloatArray> {
-        require(edgeStrips > 0) { "edgeStrips must be positive: $edgeStrips" }
-        require(edgeWidthFraction > 0f && edgeWidthFraction <= 1f) {
-            "edgeWidthFraction must be in (0, 1]: $edgeWidthFraction"
+        requireValidEdge(edgeStrips, edgeWidthFraction)
+        if (widthPx <= 0 || heightPx <= 0 || !(blurredWidthPx > 0f) || maxBlurPx <= 0) {
+            return emptyList()
         }
-        if (widthPx <= 0 || !(blurredWidthPx > 0f) || maxBlurPx <= 0) return emptyList()
         val blurred = blurredWidthPx.coerceAtMost(widthPx.toFloat())
         val front = if (anchor == Anchor.RIGHT) widthPx - blurred else blurred
         val stripWidth = widthPx * edgeWidthFraction / edgeStrips
@@ -100,9 +101,19 @@ object DuoBlurCurve {
 
         // Distances [from, to] are measured from the front into the blurred share.
         fun add(radius: Float, alpha: Float, from: Float, to: Float) {
-            val left = if (anchor == Anchor.RIGHT) front + from else front - to
-            val right = if (anchor == Anchor.RIGHT) front + to else front - from
-            rows += row(radius, alpha, left, right, height)
+            val (l, r) = if (anchor == Anchor.RIGHT) front + from to front + to
+                else front - to to front - from
+            rows += row(radius, alpha, l, r, height)
+        }
+
+        // Grows the last row outward to [to]; the surface edge is hit exactly, not by sums.
+        fun extendLast(to: Float, atEdge: Boolean) {
+            val last = rows.last()
+            if (anchor == Anchor.RIGHT) {
+                last[4] = if (atEdge) widthPx.toFloat() else front + to
+            } else {
+                last[2] = if (atEdge) 0f else front - to
+            }
         }
 
         var edgeEnd = 0f
@@ -110,14 +121,28 @@ object DuoBlurCurve {
             val from = i * stripWidth
             if (blurred - from < MIN_REGION_PX) break
             val to = minOf((i + 1) * stripWidth, blurred)
-            val f = (i + 1f) / edgeStrips
-            add(maxBlurPx * f, f, from, to)
+            if (rows.isNotEmpty() && to - from < MIN_REGION_PX) {
+                extendLast(to, atEdge = false)
+            } else {
+                val f = (i + 1f) / edgeStrips
+                add(maxBlurPx * f, f, from, to)
+            }
             edgeEnd = to
         }
-        if (blurred - edgeEnd >= MIN_REGION_PX) {
+        val remainder = blurred - edgeEnd
+        if (remainder >= MIN_REGION_PX) {
             add(maxBlurPx.toFloat(), 1f, edgeEnd, blurred)
+        } else if (remainder > 0f && rows.isNotEmpty()) {
+            extendLast(blurred, atEdge = true)
         }
         return rows
+    }
+
+    private fun requireValidEdge(edgeStrips: Int, edgeWidthFraction: Float) {
+        require(edgeStrips > 0) { "edgeStrips must be positive: $edgeStrips" }
+        require(edgeWidthFraction > 0f && edgeWidthFraction <= 1f) {
+            "edgeWidthFraction must be in (0, 1]: $edgeWidthFraction"
+        }
     }
 
     private fun row(
