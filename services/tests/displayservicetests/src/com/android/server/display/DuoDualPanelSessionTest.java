@@ -134,4 +134,38 @@ public class DuoDualPanelSessionTest {
         assertThat(mSession.cancel()).isEqualTo(DuoDualPanelSession.Step.POWER_OFF);
         assertThat(mSession.getEndReason()).isEqualTo("CANCEL");
     }
+
+    @Test
+    public void retarget_whileLit_movesTheKeptDisplay() {
+        mSession.start(4);
+        assertThat(mSession.retarget(6)).isTrue();
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.LIT);
+        assertThat(mSession.getCoverDisplayId()).isEqualTo(6);
+        assertThat(mSession.keepsDisplayEnabled(6)).isTrue();
+        assertThat(mSession.keepsDisplayEnabled(4)).isFalse();
+    }
+
+    @Test
+    public void retarget_whilePoweringOff_awaitsTheNewDisplay() {
+        mSession.start(4);
+        mSession.onTimeout();
+        assertThat(mSession.retarget(6)).isTrue();
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.POWERING_OFF);
+        assertThat(mSession.getEndReason()).isEqualTo("TIMEOUT");
+        assertThat(mSession.onPanelState(4, /* off= */ true))
+                .isEqualTo(DuoDualPanelSession.Step.NONE);
+        assertThat(mSession.onPanelState(6, /* off= */ true))
+                .isEqualTo(DuoDualPanelSession.Step.DISABLE);
+    }
+
+    @Test
+    public void retarget_whileIdle_isIgnored() {
+        assertThat(mSession.retarget(6)).isFalse();
+        assertThat(mSession.getCoverDisplayId()).isEqualTo(DuoDualPanelSession.NO_DISPLAY);
+
+        mSession.start(4);
+        mSession.onDeviceStateCommitted(/* innerPrimary= */ false, false);
+        assertThat(mSession.retarget(6)).isFalse();
+        assertThat(mSession.getCoverDisplayId()).isEqualTo(4);
+    }
 }

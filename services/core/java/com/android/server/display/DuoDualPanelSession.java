@@ -27,6 +27,14 @@ package com.android.server.display;
  * <p>The cover display id stays readable through {@link #getCoverDisplayId()} after the session
  * ends, until the next {@link #start}, so the caller can act on a {@link Step#DISABLE}. A
  * {@link #start} while a session is active is ignored.
+ *
+ * <p>"The panel reports off" ({@link #onPanelState} with {@code off}) means the power controller
+ * requested OFF and the display device info was updated to {@code STATE_OFF}. SurfaceFlinger's
+ * {@code setDisplayPowerMode} may still be in flight at that point; the stock device-state
+ * transition trusts the same signal before it disables a display.
+ *
+ * <p>{@link #retarget} follows the cover when a forced stock commit moves it to another logical
+ * display while the session is active, so the caller keeps that display enabled instead.
  */
 final class DuoDualPanelSession {
     enum State { IDLE, LIT, POWERING_OFF }
@@ -61,6 +69,18 @@ final class DuoDualPanelSession {
         mState = State.LIT;
         mCoverDisplayId = coverDisplayId;
         mEndReason = "NONE";
+        return true;
+    }
+
+    /**
+     * Moves an active session to the cover's new logical display; returns false, changing
+     * nothing, when IDLE.
+     */
+    boolean retarget(int coverDisplayId) {
+        if (mState == State.IDLE) {
+            return false;
+        }
+        mCoverDisplayId = coverDisplayId;
         return true;
     }
 

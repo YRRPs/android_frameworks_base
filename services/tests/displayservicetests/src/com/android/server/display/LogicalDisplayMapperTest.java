@@ -1636,12 +1636,7 @@ public class LogicalDisplayMapperTest {
         // As on the device: each state's layout gives the disabled cover its own logical id,
         // so HALF_OPENED -> OPENED moves the cover and the stock transition blanks it.
         FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
-        Layout openLayout = new Layout();
-        createNonDefaultDisplay(openLayout, devices.mOuter, /* enabled= */ false,
-                /* group= */ null);
-        createDefaultDisplay(openLayout, devices.mInner);
-        when(mDeviceStateToLayoutMapSpy.get(DUO_STATE_OPEN.getIdentifier()))
-                .thenReturn(openLayout);
+        useDeviceLikeOpenLayout(devices);
         LogicalDisplay cover = unfoldDuo(devices);
 
         mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_OPEN);
@@ -1701,6 +1696,98 @@ public class LogicalDisplayMapperTest {
         assertEquals("CANCEL", mLogicalDisplayMapper.getDuoDualPanelSessionLocked()
                 .getEndReason());
         assertCoverDisabledOnlyOncePanelOff(devices, cover);
+    }
+
+    @Test
+    public void duoUnfold_forcedCommitWhileCoverOn_keepsCoverEnabledThenDisablesWhenOff() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        useDeviceLikeOpenLayout(devices);
+        LogicalDisplay cover = unfoldDuo(devices);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_OPEN);
+
+        // The cover never reports OFF in time: the stock timeout forces the commit.
+        moveTime(TIMEOUT_STATE_TRANSITION_MILLIS);
+
+        LogicalDisplay movedCover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        assertNotEquals(id(cover), id(movedCover));
+        assertTrue(movedCover.isEnabledLocked());
+        assertTrue(movedCover.isInTransitionLocked());
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(id(movedCover), session.getCoverDisplayId());
+        assertEquals("OPENED", session.getEndReason());
+        assertCoverDisabledOnlyOncePanelOff(devices, movedCover);
+    }
+
+    @Test
+    public void duoPoweringOff_foldBack_coverOffBeforeCommit() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        LogicalDisplay cover = unfoldDuo(devices);
+        devices.mInner.setState(STATE_ON);
+        moveTime(DuoDualPanelSession.TIMEOUT_MS);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+
+        devices.mOuter.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mOuter);
+        assertFalse(cover.isEnabledLocked());
+        devices.mInner.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mInner);
+
+        assertFoldedBack(devices, "TIMEOUT");
+    }
+
+    @Test
+    public void duoPoweringOff_foldBack_commitBeforeCoverOff() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        unfoldDuo(devices);
+        devices.mInner.setState(STATE_ON);
+        moveTime(DuoDualPanelSession.TIMEOUT_MS);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+
+        devices.mInner.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mInner);
+        // The cover is still on: the stock timeout forces the fold back.
+        moveTime(TIMEOUT_STATE_TRANSITION_MILLIS);
+
+        assertFoldedBack(devices, "CLOSED");
+    }
+
+    @Test
+    public void duoUnfold_coverAlreadyOffAtPowerOff_disablesAtOnce() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        LogicalDisplay cover = unfoldDuo(devices);
+        // Off without a change report: nothing else would end the session.
+        devices.mOuter.setState(STATE_OFF);
+
+        moveTime(DuoDualPanelSession.TIMEOUT_MS);
+
+        assertFalse(cover.isEnabledLocked());
+        assertFalse(cover.isInTransitionLocked());
+        assertEquals(DuoDualPanelSession.State.IDLE,
+                mLogicalDisplayMapper.getDuoDualPanelSessionLocked().getState());
+    }
+
+    @Test
+    public void duoUnfold_sleepWhilePending_startsNoSession() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        // The inner panel is not off yet, so the open stays pending.
+        devices.mInner.setState(STATE_ON);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_HALF_OPEN);
+        assertFalse(cover.isInTransitionLocked());
+
+        mLogicalDisplayMapper.onEarlyInteractivityChange(false);
+
+        // Blanked as the stock transition would have.
+        assertTrue(cover.isInTransitionLocked());
+        devices.mOuter.setState(STATE_OFF);
+        devices.mInner.setState(STATE_OFF);
+        moveTime(TIMEOUT_STATE_TRANSITION_MILLIS);
+
+        assertDisplayDisabled(devices.mOuter);
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mInner)));
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.State.IDLE, session.getState());
+        assertEquals(DuoDualPanelSession.NO_DISPLAY, session.getCoverDisplayId());
     }
 
     @Test
@@ -1852,6 +1939,28 @@ public class LogicalDisplayMapperTest {
         assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mOuter)));
         clearInvocations(mListenerMock);
         return devices;
+    }
+
+    /** As on the device: OPENED gives the disabled cover its own logical id. */
+    private void useDeviceLikeOpenLayout(FoldableDisplayDevices devices) {
+        Layout openLayout = new Layout();
+        createNonDefaultDisplay(openLayout, devices.mOuter, /* enabled= */ false,
+                /* group= */ null);
+        createDefaultDisplay(openLayout, devices.mInner);
+        when(mDeviceStateToLayoutMapSpy.get(DUO_STATE_OPEN.getIdentifier()))
+                .thenReturn(openLayout);
+    }
+
+    private void assertFoldedBack(FoldableDisplayDevices devices, String endReason) {
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        assertEquals(DEFAULT_DISPLAY, id(cover));
+        assertTrue(cover.isEnabledLocked());
+        assertDisplayDisabled(devices.mInner);
+        mLogicalDisplayMapper.forEachLocked(
+                display -> assertFalse(display.isInTransitionLocked()));
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.State.IDLE, session.getState());
+        assertEquals(endReason, session.getEndReason());
     }
 
     /** Unfolds to HALF_OPENED and returns the cover's logical display. */

@@ -25,6 +25,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.ContentResolver;
@@ -148,6 +150,15 @@ public class FoldSettingProviderTest {
         setAnimatorDurationScale(1f);
 
         assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+    }
+
+    @Test
+    public void otherStyle_skipsTheAnimatorScaleRead() {
+        setFoldAnimationStyle(1);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+        verify(mSettingsWrapper, never()).getGlobalFloat(any(),
+                eq(Settings.Global.ANIMATOR_DURATION_SCALE), anyFloat());
     }
 
     @Test
