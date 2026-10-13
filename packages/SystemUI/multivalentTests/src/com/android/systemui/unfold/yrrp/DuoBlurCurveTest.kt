@@ -68,4 +68,48 @@ class DuoBlurCurveTest : SysuiTestCase() {
         assertThat(DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS).isEqualTo(0.8f)
         assertThat(DuoBlurCurve.OPEN_ANGLE_DEGREES).isEqualTo(165f)
     }
+
+    @Test
+    fun strips_emptyWhenNothingBlurred() {
+        val rows = DuoBlurCurve.blurStrips(1000, 2000, blurredWidthPx = 0f, maxBlurPx = 220,
+            anchor = DuoBlurCurve.Anchor.RIGHT, edgeStrips = 4)
+        assertThat(rows).isEmpty()
+    }
+
+    @Test
+    fun strips_rightAnchor_rampFromFrontThenFullToEdge() {
+        // Width 1000, blurred 800 (front at x = 200), edge 0.6 * 1000 = 600, 4 strips of 150.
+        val rows = DuoBlurCurve.blurStrips(1000, 2000, blurredWidthPx = 800f, maxBlurPx = 200,
+            anchor = DuoBlurCurve.Anchor.RIGHT, edgeStrips = 4)
+        assertThat(rows).hasSize(5)
+        assertThat(rows[0].toList()).containsExactly(50f, 0.25f, 200f, 0f, 350f, 2000f, 0f, 0f, 0f, 0f).inOrder()
+        assertThat(rows[3].toList()).containsExactly(200f, 1f, 650f, 0f, 800f, 2000f, 0f, 0f, 0f, 0f).inOrder()
+        assertThat(rows[4].toList()).containsExactly(200f, 1f, 800f, 0f, 1000f, 2000f, 0f, 0f, 0f, 0f).inOrder()
+    }
+
+    @Test
+    fun strips_leftAnchor_mirrorsTheRamp() {
+        // Blurred share [0, 800]; the sharp side is to the right of x = 800.
+        val rows = DuoBlurCurve.blurStrips(1000, 2000, blurredWidthPx = 800f, maxBlurPx = 200,
+            anchor = DuoBlurCurve.Anchor.LEFT, edgeStrips = 4)
+        assertThat(rows).hasSize(5)
+        assertThat(rows[0].toList()).containsExactly(50f, 0.25f, 650f, 0f, 800f, 2000f, 0f, 0f, 0f, 0f).inOrder()
+        assertThat(rows[4].toList()).containsExactly(200f, 1f, 0f, 0f, 200f, 2000f, 0f, 0f, 0f, 0f).inOrder()
+    }
+
+    @Test
+    fun strips_truncatedWhenBlurredShareIsNarrowerThanTheEdge() {
+        // Blurred 200 of 1000; edge strips are 150 wide, so one full strip and one 50 px strip.
+        val rows = DuoBlurCurve.blurStrips(1000, 2000, blurredWidthPx = 200f, maxBlurPx = 200,
+            anchor = DuoBlurCurve.Anchor.RIGHT, edgeStrips = 4)
+        assertThat(rows).hasSize(2)
+        assertThat(rows[1][2]).isEqualTo(950f)
+        assertThat(rows[1][4]).isEqualTo(1000f)
+    }
+
+    @Test
+    fun frontPx_rightAnchorIsMeasuredFromTheLeft() {
+        assertThat(DuoBlurCurve.frontPx(1000, 0.3f, DuoBlurCurve.Anchor.RIGHT)).isEqualTo(700)
+        assertThat(DuoBlurCurve.frontPx(1000, 0.3f, DuoBlurCurve.Anchor.LEFT)).isEqualTo(300)
+    }
 }
