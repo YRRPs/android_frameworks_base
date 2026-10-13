@@ -231,7 +231,7 @@ constructor(
         if (!available) return
         when {
             sequence.state == State.COVER_ON_OWN_DISPLAY -> coverFrame.setBlurRegions(rows)
-            !overlayHandedOff -> cover.setBlurRegions(rows)
+            !overlayHandedOff -> cover.setNaturalBlurRegions(rows, w, h)
         }
     }
 

@@ -96,15 +96,17 @@ constructor(
      * match the captured display (the same cover panel); the picture is not scaled. [onShown]
      * runs on the bg thread at most once, only for the latest request: a newer [show],
      * [capture] or [release] supersedes this one and it never reports. It reports true once
-     * attached, and false when there is no picture, the bitmap is recycled or not a hardware
+     * attached, and false when there is no picture, the picture is not [widthPx] x [heightPx]
+     * (the cover was rotated when captured), the bitmap is recycled or not a hardware
      * bitmap, or the display has no root display area within [ATTACH_TIMEOUT_MS]. With no
-     * picture or no DisplayAreaHelper, false is reported synchronously, before this returns.
+     * picture, a rotated picture or no DisplayAreaHelper, false is reported synchronously,
+     * before this returns.
      */
     open fun show(targetDisplayId: Int, widthPx: Int, heightPx: Int, onShown: (Boolean) -> Unit) {
         ensureOnBg()
         removeLayers()
         val requested = ++generation
-        if (shot == null || !displayAreaHelper.isPresent) {
+        if (!displayAreaHelper.isPresent || !matchesNaturalSize(widthPx, heightPx)) {
             onShown(false)
             return
         }
@@ -132,6 +134,17 @@ constructor(
         val layer = blur?.takeIf { it.isValid } ?: return false
         SurfaceControl.Transaction().setBlurRegions(layer, regions.toTypedArray()).apply()
         return true
+    }
+
+    /**
+     * The picture is placed unrotated on the cover's own display, whose natural orientation is
+     * the only one supported; a shot taken while the cover was rotated is skipped.
+     */
+    private fun matchesNaturalSize(widthPx: Int, heightPx: Int): Boolean {
+        val bitmap = shot ?: return false
+        if (bitmap.width == widthPx && bitmap.height == heightPx) return true
+        log("cover frame skipped rotated w=${bitmap.width} h=${bitmap.height}")
+        return false
     }
 
     /** Removes the layers and recycles the picture. Safe to call repeatedly. */

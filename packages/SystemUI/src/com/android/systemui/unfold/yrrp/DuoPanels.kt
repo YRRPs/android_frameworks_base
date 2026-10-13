@@ -19,6 +19,7 @@ package com.android.systemui.unfold.yrrp
 import android.hardware.display.DisplayManager
 import android.view.Display
 import android.view.DisplayInfo
+import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 
 /**
  * Natural sizes of the two Duo panels, chosen the way the overlay controllers choose their
@@ -46,3 +47,13 @@ data class DuoPanels(val coverW: Int, val coverH: Int, val innerW: Int, val inne
         }
     }
 }
+
+/**
+ * Applies blur rows built in a panel's natural coordinates ([naturalW] x [naturalH]) to the
+ * overlay, rotated into the overlay's current logical coordinates.
+ */
+fun FullscreenLightRevealAnimationController.setNaturalBlurRegions(
+    rows: List<FloatArray>,
+    naturalW: Int,
+    naturalH: Int,
+): Boolean = setBlurRegions(DuoRegionRotation.toLogical(rows, rotation, naturalW, naturalH))

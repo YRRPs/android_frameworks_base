@@ -80,6 +80,10 @@ constructor(
     private lateinit var wwm: WindowlessWindowManager
 
     private var currentRotation: Int = context.display.rotation
+
+    /** The default display's current Surface rotation, which the overlay surface follows. */
+    val rotation: Int
+        get() = currentRotation
     private var root: SurfaceControlViewHost? = null
 
     /** The scrim view that is used to reveal the screen. */

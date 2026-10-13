@@ -264,7 +264,7 @@ constructor(
         val (w, h) = panels.coverW to panels.coverH
         val share = coverBlurredShare
         val rows = DuoBlurCurve.rowsFor(w, h, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
-        runtimeState.blurAvailable = cover.setBlurRegions(rows)
+        runtimeState.blurAvailable = cover.setNaturalBlurRegions(rows, w, h)
     }
 
     private inner class CoverRevealEndListener : AnimatorListenerAdapter() {
@@ -337,7 +337,7 @@ constructor(
             val share = DuoBlurCurve.innerRemaining(progress)
             val rows = DuoBlurCurve.rowsFor(w, h, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
             // Retry every callback: the first apply can precede a valid surface.
-            runtimeState.blurAvailable = inner.setBlurRegions(rows)
+            runtimeState.blurAvailable = inner.setNaturalBlurRegions(rows, w, h)
             inner.isTouchBlocked =
                 runtimeState.phase == FoldAnimationPhase.FOLDING ||
                     progress < DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS

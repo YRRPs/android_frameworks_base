@@ -112,6 +112,19 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
+    fun rotatedCover_getsRowsInItsLogicalCoordinates() {
+        whenever(cover.rotation).thenReturn(1)
+        startFolded()
+
+        openTo(30f)
+
+        val natural = coverOpeningRows(30f).map { it.toFloatArray() }
+        val expected = DuoRegionRotation.toLogical(natural, 1, COVER_W, COVER_H)
+        assertThat(lastCoverRegions()).isEqualTo(expected.map { it.toList() })
+        assertThat(lastCoverRegions()).isNotEqualTo(coverOpeningRows(30f))
+    }
+
+    @Test
     fun closingReadingsAfterAFold_neverStartAnOpen() {
         hinge.currentAngle = 20f
         startFolded()
