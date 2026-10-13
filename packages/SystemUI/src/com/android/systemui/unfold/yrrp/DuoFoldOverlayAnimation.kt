@@ -25,7 +25,6 @@ import android.content.Context
 import android.hardware.devicestate.DeviceStateManager
 import android.hardware.display.DisplayManager
 import android.os.Handler
-import android.view.Display
 import android.view.DisplayInfo
 import android.view.animation.DecelerateInterpolator
 import com.android.app.tracing.coroutines.launchTraced as launch
@@ -45,12 +44,10 @@ import com.android.systemui.unfold.UnfoldTransitionProgressProvider
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
-import com.android.systemui.unfold.yrrp.DuoOpenSequence.Action
 import com.android.systemui.util.concurrency.ThreadFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import javax.inject.Inject
-import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -59,10 +56,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 
 /**
- * The Duo fold animation's directional blur. Opening: while folded with the cover on, the cover
- * blurs in from its right edge as soon as the hinge leaves 0 degrees ([CoverHingeAngleSource]).
- * When system_server moves the cover panel to its own logical display, the frozen cover picture
- * ([DuoCoverFrame]) keeps blurring there until that display goes away. The inner screen turns
+ * The Duo fold animation's directional blur. Opening: the cover blurs in from its right edge as
+ * soon as the hinge leaves 0 degrees, then as a frozen picture on its own display
+ * ([DuoCoverOpening], fed the fold, screen and style changes from here). The inner screen turns
  * on fully blurred and clears right to left with unfold progress, blocking touch until
  * [DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS]. Folding: the inner blur grows back, then the cover
  * screen turns on blurred and sweeps clear left to right over [COVER_REVEAL_MS]. Runs only
@@ -84,24 +80,16 @@ constructor(
     private val powerInteractor: PowerInteractor,
     @Background private val applicationScope: CoroutineScope,
     @YrrpFoldAnimationLog private val logBuffer: LogBuffer,
-    private val coverHinge: CoverHingeAngleSource,
-    private val coverFrame: DuoCoverFrame,
+    private val coverOpening: DuoCoverOpening,
     private val displayManager: DisplayManager,
 ) : FullscreenLightRevealAnimation {
 
     private lateinit var inner: FullscreenLightRevealAnimationController
     private lateinit var cover: FullscreenLightRevealAnimationController
-    private val hingeProgress = CoverHingeProgress(DuoBlurCurve.OPEN_ANGLE_DEGREES)
-    private val openSequence = DuoOpenSequence()
-    private var coverW = 0
-    private var coverH = 0
-    private var innerW = 0
-    private var innerH = 0
+    private var panels = DuoPanels(0, 0, 0, 0)
     private var isFolded = false
-    private var isScreenOn = false
     private var pendingUnfold = false
     private var pendingCoverReveal = false
-    private var lastCoverProgress = 0f
     private var lastInnerProgress = 0f
     private var coverBlurredShare = 0f
     private var coverAnimator: ValueAnimator? = null
@@ -112,20 +100,20 @@ constructor(
         cover = createController(COVER_OVERLAY_TITLE) { minByOrNull { it.naturalWidth } }
         inner.init()
         cover.init()
-        readPanelSizes()
+        panels = DuoPanels.read(displayManager)
+        // The cover opening runs on bg; its init must precede the first fold or screen callback.
+        onBg { coverOpening.init(cover, panels) }
         deviceStateManager.registerCallback(
             threadFactory.buildDelayableExecutorOnHandler(bgHandler),
             FoldListener(),
         )
         bgProgressProvider.addCallback(ProgressListener())
-        displayManager.registerDisplayListener(CoverDisplayListener(), bgHandler)
         applicationScope.launch {
             powerInteractor.isAsleep.collect { asleep ->
                 if (asleep) {
                     onBg {
-                        isScreenOn = false
+                        coverOpening.onScreenChanged(false)
                         cancel("ASLEEP")
-                        updateCoverListening()
                     }
                 }
             }
@@ -142,33 +130,15 @@ constructor(
             overlayContainerName = title,
         )
 
-    /** The same internal-display selection the controllers use: narrowest cover, widest inner. */
-    private fun readPanelSizes() {
-        val internal =
-            displayManager
-                .getDisplays(DisplayManager.DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED)
-                .map { DisplayInfo().apply { it.getDisplayInfo(this) } }
-                .filter { it.type == Display.TYPE_INTERNAL }
-        internal.minByOrNull { it.naturalWidth }?.let {
-            coverW = it.naturalWidth
-            coverH = it.naturalHeight
-        }
-        internal.maxByOrNull { it.naturalWidth }?.let {
-            innerW = it.naturalWidth
-            innerH = it.naturalHeight
-        }
-    }
-
     private fun isDuo() =
         selector.currentStyle() == FoldAnimationStyle.DUO && contentResolver.areAnimationsEnabled()
 
     /** The style setting changed; the cover hinge listens only for Duo. */
-    fun onStyleChanged() = onBg { updateCoverListening() }
+    fun onStyleChanged() = onBg { coverOpening.onStyleChanged() }
 
     @BinderThread
     override fun onScreenTurningOn(onOverlayReady: Runnable) = onBg {
-        isScreenOn = true
-        updateCoverListening()
+        coverOpening.onScreenChanged(true)
         // Consume the pending flags whatever the style, so a stale flag never leaks into a later
         // Duo transition.
         val unfold = !isFolded && pendingUnfold
@@ -186,11 +156,7 @@ constructor(
     }
 
     private fun startUnfold(onOverlayReady: Runnable) {
-        // The default display is the inner screen now; a cover overlay left on it would blur it.
-        // The frame takes over once the cover's own display appears.
-        if (openSequence.state == DuoOpenSequence.State.COVER_ON_DEFAULT) {
-            cover.ensureOverlayRemoved()
-        }
+        coverOpening.onInnerUnfoldStarted()
         lastInnerProgress = 0f
         attach(inner, FoldAnimationPhase.UNFOLDING, onOverlayReady)
         inner.isTouchBlocked = true
@@ -250,17 +216,17 @@ constructor(
     private fun recordFront(controller: FullscreenLightRevealAnimationController) {
         if (controller === inner) {
             val share = DuoBlurCurve.innerRemaining(lastInnerProgress)
-            runtimeState.innerBlurFrontPx = DuoBlurCurve.frontPx(innerW, share, Anchor.LEFT)
+            runtimeState.innerBlurFrontPx =
+                DuoBlurCurve.frontPx(panels.innerW, share, Anchor.LEFT)
         } else {
             runtimeState.coverBlurFrontPx =
-                DuoBlurCurve.frontPx(coverW, coverBlurredShare, Anchor.RIGHT)
+                DuoBlurCurve.frontPx(panels.coverW, coverBlurredShare, Anchor.RIGHT)
         }
     }
 
     /**
-     * The inner overlay blurs and blocks touch until the transition finishes, and the cover
-     * opening runs until the unfold takes over; a lost finish must not leave either up. The
-     * cover reveal has its own bounds.
+     * The inner overlay blurs and blocks touch until the transition finishes; a lost finish must
+     * not leave it up. The cover reveal and the cover opening have their own bounds.
      */
     private fun armSafetyTimeout(phase: FoldAnimationPhase) {
         bgHandler.removeCallbacks(safetyTimeout)
@@ -269,94 +235,6 @@ constructor(
 
     private val safetyTimeout = Runnable {
         if (runtimeState.phase in TIMED_PHASES) cancel("TIMEOUT")
-    }
-
-    /** Listens to the cover hinge while folded, screen on and Duo, or while an open runs. */
-    private fun updateCoverListening() {
-        val wanted = hingeProgress.shouldListen(isFolded, isScreenOn, isDuo())
-        if (wanted && !coverHinge.isListening) {
-            if (!coverHinge.start(::onCoverAngle)) log("cover hinge unavailable")
-        } else if (
-            !wanted && coverHinge.isListening && openSequence.state == DuoOpenSequence.State.IDLE
-        ) {
-            coverHinge.stop()
-        }
-    }
-
-    private fun onCoverAngle(angleDegrees: Float) {
-        // The fold's own cover reveal owns the cover overlay until it finishes.
-        if (runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) return
-        lastCoverProgress = hingeProgress.progressFor(angleDegrees)
-        perform(openSequence.onCoverAngle(angleDegrees))
-    }
-
-    private fun perform(action: Action) {
-        when (action) {
-            Action.NONE -> Unit
-            Action.CAPTURE_AND_ATTACH -> startCoverOpening()
-            Action.UPDATE_COVER -> applyCoverBlur()
-            Action.MOVE_TO_COVER_DISPLAY -> moveCoverToOwnDisplay()
-            Action.RELEASE_COVER -> releaseCover()
-        }
-    }
-
-    private fun startCoverOpening() {
-        coverFrame.capture(Display.DEFAULT_DISPLAY)
-        attach(cover, FoldAnimationPhase.COVER_OPENING, Runnable {}, initialBlurPx = 0)
-        applyCoverBlur()
-        recordFront(cover)
-    }
-
-    private fun moveCoverToOwnDisplay() {
-        val id = openSequence.coverDisplayId
-        runtimeState.dualPanel = true
-        coverFrame.show(id, coverW, coverH) { shown ->
-            if (shown) applyCoverBlur()
-            log("cover frame display=$id shown=$shown")
-        }
-        cover.ensureOverlayRemoved()
-    }
-
-    private fun releaseCover() {
-        recordFront(cover)
-        coverFrame.release()
-        cover.ensureOverlayRemoved()
-        runtimeState.dualPanel = false
-        if (runtimeState.phase == FoldAnimationPhase.COVER_OPENING) {
-            bgHandler.removeCallbacks(safetyTimeout)
-            runtimeState.overlayAttached = false
-            runtimeState.phase = FoldAnimationPhase.IDLE
-        }
-        log("cover overlay removed")
-        updateCoverListening()
-    }
-
-    /** Blurs the cover's right-hand share for [lastCoverProgress], on the frame once shown. */
-    private fun applyCoverBlur() {
-        val coverage = DuoBlurCurve.coverCoverage(lastCoverProgress)
-        coverBlurredShare = coverage
-        val maxBlurPx = (DuoBlurCurve.MAX_BLUR_PX * coverage).roundToInt()
-        val rows =
-            DuoBlurCurve.blurStrips(coverW, coverH, coverW * coverage, maxBlurPx, Anchor.RIGHT)
-        if (rows.isNotEmpty()) {
-            // The frame applies regions whatever the blur setting, so check availability here.
-            runtimeState.blurAvailable = cover.isBlurAvailable()
-            if (!runtimeState.blurAvailable) return
-        }
-        if (openSequence.state == DuoOpenSequence.State.COVER_ON_OWN_DISPLAY) {
-            coverFrame.setBlurRegions(rows)
-        } else {
-            cover.setBlurRegions(rows)
-        }
-    }
-
-    /** A narrow internal display other than the default is the cover's own display. */
-    private fun onCoverDisplayAppeared(displayId: Int) {
-        if (displayId == Display.DEFAULT_DISPLAY) return
-        val display = displayManager.getDisplay(displayId) ?: return
-        val info = DisplayInfo().apply { display.getDisplayInfo(this) }
-        if (info.type != Display.TYPE_INTERNAL || info.naturalWidth >= innerW) return
-        perform(openSequence.onCoverDisplayAdded(displayId))
     }
 
     /** Runs the timed cover-screen clear once the cover panel is on. */
@@ -377,14 +255,9 @@ constructor(
     private fun onCoverRevealFrame(animatedFraction: Float) {
         // animatedFraction is already eased by the decelerate interpolator.
         coverBlurredShare = 1f - animatedFraction
-        val rows =
-            DuoBlurCurve.blurStrips(
-                coverW,
-                coverH,
-                coverW * coverBlurredShare,
-                DuoBlurCurve.MAX_BLUR_PX,
-                Anchor.RIGHT,
-            )
+        val (w, h) = panels.coverW to panels.coverH
+        val blurred = w * coverBlurredShare
+        val rows = DuoBlurCurve.blurStrips(w, h, blurred, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
         runtimeState.blurAvailable = cover.setBlurRegions(rows)
     }
 
@@ -416,9 +289,8 @@ constructor(
     }
 
     private fun cancel(reason: String) {
-        val active =
-            runtimeState.overlayAttached || openSequence.state != DuoOpenSequence.State.IDLE
-        perform(openSequence.cancel())
+        val active = runtimeState.overlayAttached || coverOpening.isActive
+        coverOpening.cancel(reason)
         when (runtimeState.phase) {
             FoldAnimationPhase.UNFOLDING, FoldAnimationPhase.FOLDING -> recordFront(inner)
             FoldAnimationPhase.COVER_REVEAL -> recordFront(cover)
@@ -460,15 +332,9 @@ constructor(
                 return@onBg
             }
             lastInnerProgress = progress
-            val blurredPx = innerW * DuoBlurCurve.innerRemaining(progress)
-            val rows =
-                DuoBlurCurve.blurStrips(
-                    innerW,
-                    innerH,
-                    blurredPx,
-                    DuoBlurCurve.MAX_BLUR_PX,
-                    Anchor.LEFT,
-                )
+            val (w, h) = panels.innerW to panels.innerH
+            val blurred = w * DuoBlurCurve.innerRemaining(progress)
+            val rows = DuoBlurCurve.blurStrips(w, h, blurred, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
             // Retry every callback: the first apply can precede a valid surface.
             runtimeState.blurAvailable = inner.setBlurRegions(rows)
             inner.isTouchBlocked =
@@ -483,10 +349,7 @@ constructor(
             ) {
                 detach(inner)
             }
-            // The unfold is over; a cover that never got its own display has nothing left to do.
-            if (openSequence.state == DuoOpenSequence.State.COVER_ON_DEFAULT) {
-                perform(openSequence.cancel())
-            }
+            coverOpening.onUnfoldFinished()
         }
     }
 
@@ -514,18 +377,7 @@ constructor(
         } else {
             pendingCoverReveal = false
         }
-        updateCoverListening()
-    }
-
-    /** Display add and remove also report enable and disable (LogicalDisplayMapper). */
-    private inner class CoverDisplayListener : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) = onBg { onCoverDisplayAppeared(displayId) }
-
-        override fun onDisplayRemoved(displayId: Int) = onBg {
-            perform(openSequence.onCoverDisplayRemoved(displayId))
-        }
-
-        override fun onDisplayChanged(displayId: Int) = Unit
+        coverOpening.onFoldChanged(folded)
     }
 
     private fun onBg(f: () -> Unit) {
@@ -539,12 +391,7 @@ constructor(
         private const val TAG = "YrrpFoldAnimation"
         private const val INNER_OVERLAY_TITLE = "yrrp-duo-unfold-overlay"
         private const val COVER_OVERLAY_TITLE = "yrrp-duo-cover-overlay"
-        private val TIMED_PHASES =
-            setOf(
-                FoldAnimationPhase.UNFOLDING,
-                FoldAnimationPhase.FOLDING,
-                FoldAnimationPhase.COVER_OPENING,
-            )
+        private val TIMED_PHASES = setOf(FoldAnimationPhase.UNFOLDING, FoldAnimationPhase.FOLDING)
         const val COVER_REVEAL_MS = 350L
         const val READY_TIMEOUT_MS = 2000L
         const val SAFETY_TIMEOUT_MS = 5000L

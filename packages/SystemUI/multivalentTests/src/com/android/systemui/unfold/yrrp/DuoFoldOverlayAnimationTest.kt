@@ -16,15 +16,12 @@
 
 package com.android.systemui.unfold.yrrp
 
-import android.hardware.SensorManager
 import android.hardware.devicestate.DeviceStateManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.DisplayManagerGlobal
 import android.os.Handler
 import android.testing.TestableLooper
 import android.view.Display
-import android.view.DisplayAdjustments
-import android.view.DisplayInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.R
@@ -39,12 +36,15 @@ import com.android.systemui.unfold.FakeUnfoldTransitionProvider
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
 import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_H
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_OWN_ID
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_W
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_H
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_ID
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_W
 import com.android.systemui.unfoldedDeviceState
 import com.android.systemui.util.concurrency.ThreadFactory
 import com.google.common.truth.Truth.assertThat
-import java.io.PrintWriter
-import java.io.StringWriter
-import java.util.Optional
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
@@ -94,7 +94,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     private val displayManager = mock<DisplayManager>()
     private val displayGlobal = mock<DisplayManagerGlobal>()
     private lateinit var hinge: FakeHingeSource
-    private lateinit var frame: FakeFrame
+    private lateinit var frame: FakeCoverFrame
     private lateinit var displayListener: DisplayManager.DisplayListener
     private lateinit var testableLooper: TestableLooper
     private lateinit var underTest: DuoFoldOverlayAnimation
@@ -119,7 +119,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         whenever(powerInteractor.isAsleep).thenReturn(isAsleep)
         val handler = Handler(testableLooper.looper)
         hinge = FakeHingeSource(handler)
-        frame = FakeFrame(handler)
+        frame = FakeCoverFrame(handler, logBuffer)
         val coverDisplay = display(Display.DEFAULT_DISPLAY, COVER_W, COVER_H)
         val innerDisplay = display(INNER_ID, INNER_W, INNER_H)
         val allDisplays = DisplayManager.DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED
@@ -477,61 +477,6 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
-    fun coverAngle_whileFoldedScreenOnDuo_attachesCoverWithRightAnchoredRows() {
-        foldWithCoverOn()
-
-        hinge.report(30f)
-        processAll()
-
-        verify(coverController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(0))
-        assertThat(frame.captures).containsExactly(Display.DEFAULT_DISPLAY)
-        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
-        assertThat(runtime.overlayAttached).isTrue()
-        assertThat(lastRegions(coverController)).isEqualTo(coverOpeningRows(30f))
-        val share = DuoBlurCurve.coverCoverage(30f / DuoBlurCurve.OPEN_ANGLE_DEGREES)
-        assertThat(runtime.coverBlurFrontPx)
-            .isEqualTo(DuoBlurCurve.frontPx(COVER_W, share, Anchor.RIGHT))
-    }
-
-    @Test
-    fun coverOwnDisplayAppearing_movesTheBlurToTheFrame() {
-        foldWithCoverOn()
-        hinge.report(30f)
-        processAll()
-        clearInvocations(coverController)
-
-        displayListener.onDisplayAdded(COVER_OWN_ID)
-        processAll()
-
-        assertThat(frame.shows).containsExactly(Triple(COVER_OWN_ID, COVER_W, COVER_H))
-        verify(coverController, atLeastOnce()).ensureOverlayRemoved()
-        assertThat(runtime.dualPanel).isTrue()
-        assertThat(frame.regions.last().map { it.toList() }).isEqualTo(coverOpeningRows(30f))
-
-        hinge.report(60f)
-        processAll()
-        assertThat(frame.regions.last().map { it.toList() }).isEqualTo(coverOpeningRows(60f))
-        verify(coverController, never()).setBlurRegions(any())
-    }
-
-    @Test
-    fun coverOwnDisplayRemoved_releasesTheFrame() {
-        foldWithCoverOn()
-        hinge.report(30f)
-        processAll()
-        displayListener.onDisplayAdded(COVER_OWN_ID)
-        processAll()
-
-        displayListener.onDisplayRemoved(COVER_OWN_ID)
-        processAll()
-
-        assertThat(frame.releases).isEqualTo(1)
-        assertThat(runtime.dualPanel).isFalse()
-        assertThat(runtime.overlayAttached).isFalse()
-        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
-    }
-
-    @Test
     fun sleepDuringOpen_releasesFrameAndBothOverlays() {
         foldWithCoverOn()
         hinge.report(30f)
@@ -559,15 +504,20 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
-    fun hingeSensorUnavailable_isLogged() {
-        hinge.startResult = false
-
+    fun holdingSlightlyOpen_keepsTheCoverOverlayAttached() {
         foldWithCoverOn()
+        hinge.report(10f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
 
-        assertThat(hinge.starts).isAtLeast(1)
-        val out = StringWriter()
-        logBuffer.dump(PrintWriter(out), 0)
-        assertThat(out.toString()).contains("cover hinge unavailable")
+        testableLooper.moveTimeForward(6_000)
+        processAll()
+
+        verify(coverController, never()).ensureOverlayRemoved()
+        assertThat(frame.releases).isEqualTo(0)
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+        assertThat(runtime.overlayAttached).isTrue()
+        assertThat(runtime.cancellations).isEqualTo(0)
     }
 
     /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */
@@ -592,19 +542,6 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
             )
             .map { it.toList() }
 
-    private fun coverOpeningRows(angle: Float): List<List<Float>> {
-        val coverage = DuoBlurCurve.coverCoverage(angle / DuoBlurCurve.OPEN_ANGLE_DEGREES)
-        val maxBlurPx = Math.round(DuoBlurCurve.MAX_BLUR_PX * coverage)
-        return DuoBlurCurve.blurStrips(
-                COVER_W,
-                COVER_H,
-                COVER_W * coverage,
-                maxBlurPx,
-                Anchor.RIGHT,
-            )
-            .map { it.toList() }
-    }
-
     private fun coverRevealRows(blurredShare: Float): List<List<Float>> =
         DuoBlurCurve.blurStrips(
                 COVER_W,
@@ -626,74 +563,6 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     private fun lastRegions(controller: FullscreenLightRevealAnimationController) =
         allRegions(controller).last()
 
-    /** A real Display over a mocked DisplayManagerGlobal, as FaceScanningProviderFactoryTest. */
-    private fun display(id: Int, width: Int, height: Int): Display {
-        val info =
-            DisplayInfo().apply {
-                type = Display.TYPE_INTERNAL
-                logicalWidth = width
-                logicalHeight = height
-                rotation = 0
-            }
-        whenever(displayGlobal.getDisplayInfo(eq(id))).thenReturn(info)
-        return Display(displayGlobal, id, info, DisplayAdjustments.DEFAULT_DISPLAY_ADJUSTMENTS)
-    }
-
-    private class FakeHingeSource(handler: Handler) : CoverHingeAngleSource(mock(), handler) {
-        var startResult = true
-        var starts = 0
-        private var onAngle: ((Float) -> Unit)? = null
-
-        override val isListening: Boolean
-            get() = onAngle != null
-
-        override fun start(onAngle: (Float) -> Unit): Boolean {
-            starts++
-            this.onAngle = if (startResult) onAngle else null
-            return startResult
-        }
-
-        override fun stop() {
-            onAngle = null
-        }
-
-        fun report(angle: Float) {
-            onAngle?.invoke(angle)
-        }
-    }
-
-    private inner class FakeFrame(handler: Handler) :
-        DuoCoverFrame(mock(), Optional.empty(), handler, logBuffer) {
-        val captures = mutableListOf<Int>()
-        val shows = mutableListOf<Triple<Int, Int, Int>>()
-        val regions = mutableListOf<List<FloatArray>>()
-        var releases = 0
-
-        override fun capture(fromDisplayId: Int): Boolean {
-            captures += fromDisplayId
-            return true
-        }
-
-        override fun show(
-            targetDisplayId: Int,
-            widthPx: Int,
-            heightPx: Int,
-            onShown: (Boolean) -> Unit,
-        ) {
-            shows += Triple(targetDisplayId, widthPx, heightPx)
-            onShown(true)
-        }
-
-        override fun setBlurRegions(regions: List<FloatArray>): Boolean {
-            this.regions += regions
-            return true
-        }
-
-        override fun release() {
-            releases++
-        }
-    }
-
     private fun createUnderTest(handler: Handler) =
         DuoFoldOverlayAnimation(
             mContext,
@@ -708,8 +577,17 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
             powerInteractor,
             scope,
             logBuffer,
-            hinge,
-            frame,
+            DuoCoverOpening(
+                handler,
+                mContext.contentResolver,
+                selector,
+                runtime,
+                powerInteractor,
+                hinge,
+                frame,
+                displayManager,
+                logBuffer,
+            ),
             displayManager,
         )
 
@@ -730,14 +608,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
     }
 
-    private fun processAll() = testableLooper.processAllMessages()
+    private fun display(id: Int, width: Int, height: Int) =
+        fakeInternalDisplay(displayGlobal, id, width, height)
 
-    private companion object {
-        const val COVER_W = 1344
-        const val COVER_H = 1892
-        const val INNER_W = 2688
-        const val INNER_H = 1892
-        const val INNER_ID = 1
-        const val COVER_OWN_ID = 4
-    }
+    private fun processAll() = testableLooper.processAllMessages()
 }
