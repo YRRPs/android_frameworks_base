@@ -173,7 +173,7 @@ constructor(
         }
         // A synchronous screenshot on bg, once per open, taken before the overlay is attached so
         // the picture holds no blur.
-        coverFrame.capture(Display.DEFAULT_DISPLAY)
+        coverFrame.capture(Display.DEFAULT_DISPLAY, cover.rotation)
         overlayHandedOff = false
         try {
             // Starts clear; the first rows follow at once and fade the blur in with the hinge.

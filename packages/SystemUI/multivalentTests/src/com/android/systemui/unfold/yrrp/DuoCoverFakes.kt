@@ -82,6 +82,7 @@ class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock
 class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     DuoCoverFrame(mock(), Optional.empty(), handler, logBuffer) {
     val captures = mutableListOf<Int>()
+    val captureRotations = mutableListOf<Int>()
     val shows = mutableListOf<Triple<Int, Int, Int>>()
     val regions = mutableListOf<List<FloatArray>>()
     var releases = 0
@@ -91,11 +92,13 @@ class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     private var pending: Pair<Int, (Boolean) -> Unit>? = null
     private var shownGeneration = -1
 
-    override fun capture(fromDisplayId: Int): Boolean {
+    override fun capture(fromDisplayId: Int, rotation: Int): Boolean {
         checkOnLooper(handler)
         generation++
         captures += fromDisplayId
-        holdsPicture = captureResult
+        captureRotations += rotation
+        // Like the real frame, a picture captured at any rotation is never shown.
+        holdsPicture = captureResult && rotation == 0
         return captureResult
     }
 

@@ -127,6 +127,24 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
+    fun coverCapturedUpsideDown_skipsTheFrameAndCancels() {
+        // At rotation 180 the shot has the natural size; only the rotation tells it apart.
+        whenever(cover.rotation).thenReturn(2)
+        val displays = startFolded()
+        openTo(30f)
+
+        displays.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+
+        assertThat(frame.captureRotations).containsExactly(2)
+        assertThat(frame.regions).isEmpty()
+        assertThat(underTest.isActive).isFalse()
+        assertThat(runtime.dualPanel).isFalse()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(dumpedLog()).contains("cover frame failed")
+    }
+
+    @Test
     fun closingReadingsAfterAFold_neverStartAnOpen() {
         hinge.currentAngle = 20f
         startFolded()

@@ -49,6 +49,8 @@ constructor(
     @YrrpFoldAnimationLog private val logBuffer: LogBuffer,
 ) {
     private var shot: Bitmap? = null
+    // Surface rotation of the captured display at capture time.
+    private var captureRotation = 0
     private var container: SurfaceControl? = null
     private var picture: SurfaceControl? = null
     private var blur: SurfaceControl? = null
@@ -73,15 +75,17 @@ constructor(
 
     /**
      * Captures [fromDisplayId]. Replaces and recycles the previous shot and cancels an in-flight
-     * [show]. Returns false if capture failed; with no picture the next [show] reports false,
-     * so the open is cancelled when the cover's own display appears.
+     * [show]. [rotation] is the display's Surface rotation at capture; any rotation but 0 makes
+     * [show] skip the frame. Returns false if capture failed; with no picture the next [show]
+     * reports false, so the open is cancelled when the cover's own display appears.
      */
-    open fun capture(fromDisplayId: Int): Boolean {
+    open fun capture(fromDisplayId: Int, rotation: Int): Boolean {
         ensureOnBg()
         generation++
         removeLayers()
         shot?.recycle()
         shot = null
+        captureRotation = rotation
         val captured =
             runCatching { imageCapture.captureDisplay(fromDisplayId) }
                 .onFailure { log("cover frame capture failed exception=${it.javaClass.name}") }
@@ -96,17 +100,17 @@ constructor(
      * match the captured display (the same cover panel); the picture is not scaled. [onShown]
      * runs on the bg thread at most once, only for the latest request: a newer [show],
      * [capture] or [release] supersedes this one and it never reports. It reports true once
-     * attached, and false when there is no picture, the picture is not [widthPx] x [heightPx]
-     * (the cover was rotated when captured), the bitmap is recycled or not a hardware
-     * bitmap, or the display has no root display area within [ATTACH_TIMEOUT_MS]. With no
-     * picture, a rotated picture or no DisplayAreaHelper, false is reported synchronously,
-     * before this returns.
+     * attached, and false when there is no picture, the cover was rotated when captured (any
+     * rotation, or a picture that is not [widthPx] x [heightPx]), the bitmap is recycled or not
+     * a hardware bitmap, or the display has no root display area within [ATTACH_TIMEOUT_MS].
+     * With no picture, a rotated picture or no DisplayAreaHelper, false is reported
+     * synchronously, before this returns.
      */
     open fun show(targetDisplayId: Int, widthPx: Int, heightPx: Int, onShown: (Boolean) -> Unit) {
         ensureOnBg()
         removeLayers()
         val requested = ++generation
-        if (!displayAreaHelper.isPresent || !matchesNaturalSize(widthPx, heightPx)) {
+        if (!displayAreaHelper.isPresent || !isUnrotatedNatural(widthPx, heightPx)) {
             onShown(false)
             return
         }
@@ -138,12 +142,14 @@ constructor(
 
     /**
      * The picture is placed unrotated on the cover's own display, whose natural orientation is
-     * the only one supported; a shot taken while the cover was rotated is skipped.
+     * the only one supported. A shot taken at any rotation is skipped: at 180 it has the natural
+     * size but would show upside down.
      */
-    private fun matchesNaturalSize(widthPx: Int, heightPx: Int): Boolean {
+    private fun isUnrotatedNatural(widthPx: Int, heightPx: Int): Boolean {
         val bitmap = shot ?: return false
-        if (bitmap.width == widthPx && bitmap.height == heightPx) return true
-        log("cover frame skipped rotated w=${bitmap.width} h=${bitmap.height}")
+        val (w, h) = bitmap.width to bitmap.height
+        if (captureRotation == 0 && w == widthPx && h == heightPx) return true
+        log("cover frame skipped rotated w=$w h=$h rotation=$captureRotation")
         return false
     }
 
