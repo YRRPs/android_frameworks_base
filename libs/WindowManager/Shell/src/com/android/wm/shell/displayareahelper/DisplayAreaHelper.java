@@ -44,9 +44,7 @@ public interface DisplayAreaHelper {
      * @param onResult invoked on the shell main thread with the builder and whether it was
      *                 attached to the display's root display area
      */
-    default void tryAttachToRootDisplayArea(int displayId, SurfaceControl.Builder builder,
-            BiConsumer<SurfaceControl.Builder, Boolean> onResult) {
-        attachToRootDisplayArea(displayId, builder, b -> onResult.accept(b, true));
-    }
+    void tryAttachToRootDisplayArea(int displayId, SurfaceControl.Builder builder,
+            BiConsumer<SurfaceControl.Builder, Boolean> onResult);
 
 }

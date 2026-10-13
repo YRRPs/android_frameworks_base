@@ -93,11 +93,11 @@ constructor(
     /**
      * Attaches the picture and a blur layer to [targetDisplayId]. [widthPx] x [heightPx] must
      * match the captured display (the same cover panel); the picture is not scaled. [onShown]
-     * runs on the bg thread with true once attached. It runs with false when a newer [show],
-     * [capture] or [release] came first, when there is no picture or the bitmap is recycled or
-     * not a hardware bitmap, or when the display has no root display area within
-     * [ATTACH_TIMEOUT_MS]. With no picture or no DisplayAreaHelper, false is reported
-     * synchronously, before this returns.
+     * runs on the bg thread at most once, only for the latest request: a newer [show],
+     * [capture] or [release] supersedes this one and it never reports. It reports true once
+     * attached, and false when there is no picture, the bitmap is recycled or not a hardware
+     * bitmap, or the display has no root display area within [ATTACH_TIMEOUT_MS]. With no
+     * picture or no DisplayAreaHelper, false is reported synchronously, before this returns.
      */
     open fun show(targetDisplayId: Int, widthPx: Int, heightPx: Int, onShown: (Boolean) -> Unit) {
         ensureOnBg()
@@ -143,10 +143,7 @@ constructor(
     }
 
     private fun tryAttach(builder: SurfaceControl.Builder, request: AttachRequest) {
-        if (request.generation != generation) {
-            request.onShown(false)
-            return
-        }
+        if (request.generation != generation) return
         request.attempts++
         displayAreaHelper.get().tryAttachToRootDisplayArea(request.displayId, builder) { b, ok ->
             bgHandler.post { onAttachResult(b, ok, request) }
@@ -158,10 +155,7 @@ constructor(
         attached: Boolean,
         request: AttachRequest,
     ) {
-        if (request.generation != generation) {
-            request.onShown(false)
-            return
-        }
+        if (request.generation != generation) return
         val timedOut = SystemClock.uptimeMillis() - request.startMs >= ATTACH_TIMEOUT_MS
         if (!attached && !timedOut) {
             bgHandler.postDelayed({ tryAttach(builder, request) }, ATTACH_RETRY_MS)
@@ -179,6 +173,7 @@ constructor(
         val bitmap = shot ?: return false
         if (bitmap.isRecycled || bitmap.config != Bitmap.Config.HARDWARE) return false
         val root = containerBuilder.build()
+        container = root
         val pictureLayer =
             SurfaceControl.Builder()
                 .setParent(root)
@@ -187,6 +182,7 @@ constructor(
                 .setCallsite("DuoCoverFrame")
                 .setName("yrrp-duo-cover-picture")
                 .build()
+        picture = pictureLayer
         val blurLayer =
             SurfaceControl.Builder()
                 .setParent(root)
@@ -194,6 +190,7 @@ constructor(
                 .setCallsite("DuoCoverFrame")
                 .setName("yrrp-duo-cover-blur")
                 .build()
+        blur = blurLayer
         bitmap.hardwareBuffer.use { buffer ->
             val transaction =
                 SurfaceControl.Transaction()
@@ -205,14 +202,12 @@ constructor(
                         pictureLayer,
                         bitmap.colorSpace?.dataSpace ?: DataSpace.DATASPACE_SRGB,
                     )
+                    // The frozen picture is the only content on this display; dimming it as
+                    // HDR content would make it differ from the live cover it replaces.
+                    .setDimmingEnabled(pictureLayer, false)
                     .setCrop(blurLayer, bounds)
-            // Avoid the HDR dimming effect on a frozen picture, as the transition animations do.
-            if (bitmap.hasGainmap()) transaction.setDimmingEnabled(pictureLayer, false)
             transaction.show(root).show(pictureLayer).show(blurLayer).apply()
         }
-        container = root
-        picture = pictureLayer
-        blur = blurLayer
         return true
     }
 
@@ -239,8 +234,8 @@ constructor(
 
     companion object {
         private const val TAG = "YrrpFoldAnimation"
-        const val ATTACH_RETRY_MS = 50L
-        const val ATTACH_TIMEOUT_MS = 500L
+        private const val ATTACH_RETRY_MS = 50L
+        private const val ATTACH_TIMEOUT_MS = 500L
         // One below the rotation-animation overlay, as FullscreenLightRevealAnimation uses.
         private const val OVERLAY_LAYER_Z_INDEX = Integer.MAX_VALUE - 1
     }
