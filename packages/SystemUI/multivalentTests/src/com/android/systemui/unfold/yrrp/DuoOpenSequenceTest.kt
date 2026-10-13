@@ -147,6 +147,15 @@ class DuoOpenSequenceTest : SysuiTestCase() {
         assertThat(seq.isActive).isFalse()
     }
 
+    @Test
+    fun usesTheGivenHingeProgress() {
+        val shared = CoverHingeProgress(openAngleDegrees = 90f)
+        val withShared = DuoOpenSequence(shared)
+        withShared.onCoverAngle(0f)
+        assertThat(withShared.onCoverAngle(1f)).isEqualTo(Action.CAPTURE_AND_ATTACH)
+        assertThat(withShared.progress).isSameInstanceAs(shared)
+    }
+
     private fun armedOpen() {
         seq.onCoverAngle(0f)
         seq.onCoverAngle(2f)

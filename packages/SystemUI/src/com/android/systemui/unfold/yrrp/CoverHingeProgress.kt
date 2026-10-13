@@ -26,11 +26,11 @@ class CoverHingeProgress(private val openAngleDegrees: Float) {
     }
 
     /**
-     * Only folded, screen on, Duo: there is no point listening while the screen is off or
-     * another fold style runs.
+     * Only folded, awake, Duo: there is no point listening while asleep (screen off or AOD) or
+     * while another fold style runs.
      */
-    fun shouldListen(folded: Boolean, screenOn: Boolean, duo: Boolean): Boolean =
-        folded && screenOn && duo
+    fun shouldListen(folded: Boolean, awake: Boolean, duo: Boolean): Boolean =
+        folded && awake && duo
 
     /** Maps a hinge angle linearly onto 0..1, reaching 1 at the open angle; NaN reads as 0. */
     fun progressFor(angleDegrees: Float): Float =

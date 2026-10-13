@@ -158,24 +158,11 @@ constructor(
     }
 
     /**
-     * Blurs everything below the overlay window. Returns false when no overlay is attached or
-     * cross-window blur is unavailable (for example under Battery Saver). Each mode replaces the
-     * other: a surface holds either one uniform blur or regions.
-     */
-    fun setBackgroundBlurRadius(radiusPx: Int): Boolean {
-        val surface = blurSurfaceOrNull(addsBlur = radiusPx > 0) ?: return false
-        SurfaceControl.Transaction()
-            .setBlurRegions(surface, emptyArray())
-            .setBackgroundBlurRadius(surface, radiusPx)
-            .apply()
-        return true
-    }
-
-    /**
      * Blurs only the given regions below the overlay window. Rows are BlurRegion#toFloatArray
-     * rows. An empty list clears the blur. Each mode replaces the other: a surface holds either
-     * one uniform blur or regions. Returns false and leaves the previous blur unchanged when
-     * nothing can be applied (no overlay attached, or cross-window blur unavailable).
+     * rows. An empty list clears the blur. Regions replace the uniform blur [addOverlay] may have
+     * started with: a surface holds one or the other. Returns false and leaves the previous blur
+     * unchanged when nothing can be applied (no overlay attached, or cross-window blur
+     * unavailable).
      */
     fun setBlurRegions(regions: List<FloatArray>): Boolean {
         val surface = blurSurfaceOrNull(addsBlur = regions.isNotEmpty()) ?: return false

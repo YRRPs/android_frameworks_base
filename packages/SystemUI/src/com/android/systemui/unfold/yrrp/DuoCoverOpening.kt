@@ -25,12 +25,10 @@ import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.LogLevel
 import com.android.systemui.log.dagger.YrrpFoldAnimationLog
 import com.android.systemui.power.domain.interactor.PowerInteractor
-import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
 import com.android.systemui.unfold.SysUIUnfoldScope
 import com.android.systemui.unfold.dagger.UnfoldBg
-import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
 import com.android.systemui.unfold.yrrp.DuoOpenSequence.Action
 import com.android.systemui.unfold.yrrp.DuoOpenSequence.State
@@ -64,9 +62,9 @@ constructor(
     private lateinit var cover: FullscreenLightRevealAnimationController
     private var panels = DuoPanels.NONE
     private val hingeProgress = CoverHingeProgress(DuoBlurCurve.OPEN_ANGLE_DEGREES)
-    private val sequence = DuoOpenSequence()
+    private val sequence = DuoOpenSequence(hingeProgress)
     private var isFolded = false
-    private var isScreenOn = false
+    private var isAwake = false
     // Logs the first reading after each listening start: arming decides on it.
     private var awaitingFirstAngle = false
     private var lastCoverProgress = 0f
@@ -81,8 +79,8 @@ constructor(
     fun init(cover: FullscreenLightRevealAnimationController, panels: DuoPanels) {
         this.cover = cover
         this.panels = panels
-        // A SystemUI restart with the cover already on gets no screen-turning-on.
-        isScreenOn = powerInteractor.screenPowerState.value == ScreenPowerState.SCREEN_ON
+        // A SystemUI restart with the cover already on gets no wake-up.
+        isAwake = powerInteractor.detailedWakefulness.value.isAwake()
         val events =
             DisplayManager.EVENT_TYPE_DISPLAY_ADDED or DisplayManager.EVENT_TYPE_DISPLAY_REMOVED
         displayManager.registerDisplayListener(CoverDisplayListener(), bgHandler, events)
@@ -98,13 +96,15 @@ constructor(
         updateListening()
     }
 
-    fun onScreenChanged(on: Boolean) {
-        isScreenOn = on
+    /** Awake, not screen-on: AOD turns the screen on while asleep. */
+    fun onAwakeChanged(awake: Boolean) {
+        isAwake = awake
         updateListening()
     }
 
+    /** The style or the animator duration scale changed. */
     fun onStyleChanged() {
-        if (isActive && !isDuo()) cancel("STYLE")
+        if (!selector.isDuoActive(contentResolver)) cancel("NOT_DUO")
         updateListening()
     }
 
@@ -118,21 +118,19 @@ constructor(
 
     /** The unfold is over; a cover that never got its own display has nothing left to do. */
     fun onUnfoldFinished() {
-        if (sequence.state == State.COVER_ON_DEFAULT) perform(sequence.cancel())
+        if (sequence.state == State.COVER_ON_DEFAULT) perform(sequence.cancel(), "UNFOLD_FINISHED")
     }
 
     fun cancel(reason: String) {
         if (!isActive) return
         log("cover opening cancelled reason=$reason")
-        perform(sequence.cancel())
+        perform(sequence.cancel(), reason)
     }
 
-    private fun isDuo() =
-        selector.currentStyle() == FoldAnimationStyle.DUO && contentResolver.areAnimationsEnabled()
-
-    /** Listens while folded, screen on and Duo, and while an open runs past the fold change. */
+    /** Listens while folded, awake and Duo, and while an open runs past the fold change. */
     private fun updateListening() {
-        val wanted = hingeProgress.shouldListen(isFolded, isScreenOn, isDuo())
+        val duo = selector.isDuoActive(contentResolver)
+        val wanted = hingeProgress.shouldListen(isFolded, isAwake, duo)
         if (wanted && !coverHinge.isListening) {
             // The first reading after a restart may come from a hinge that is still closing.
             sequence.disarm()
@@ -152,20 +150,27 @@ constructor(
         val revealing = runtimeState.phase == FoldAnimationPhase.COVER_REVEAL
         if (revealing && sequence.state != State.DISARMED) return
         lastCoverProgress = hingeProgress.progressFor(angleDegrees)
-        perform(sequence.onCoverAngle(angleDegrees))
+        perform(sequence.onCoverAngle(angleDegrees), "HINGE_CLOSED")
     }
 
-    private fun perform(action: Action) {
+    /** [reason] names a RELEASE_COVER in the log. */
+    private fun perform(action: Action, reason: String) {
         when (action) {
             Action.NONE -> Unit
             Action.CAPTURE_AND_ATTACH -> start()
             Action.UPDATE_COVER -> applyBlur()
             Action.MOVE_TO_COVER_DISPLAY -> moveToOwnDisplay()
-            Action.RELEASE_COVER -> release()
+            Action.RELEASE_COVER -> release(reason)
         }
     }
 
     private fun start() {
+        if (naturalInfo(Display.DEFAULT_DISPLAY)?.naturalWidth != panels.coverW) {
+            // Past the screen switch already; nothing was captured or attached, so just reset.
+            log("cover opening skipped display0 not cover")
+            sequence.cancel()
+            return
+        }
         // A synchronous screenshot on bg, once per open, taken before the overlay is attached so
         // the picture holds no blur.
         coverFrame.capture(Display.DEFAULT_DISPLAY)
@@ -194,7 +199,7 @@ constructor(
                 log("cover frame display=$id shown=true")
             } else {
                 log("cover frame failed display=$id")
-                perform(sequence.cancel())
+                perform(sequence.cancel(), "FRAME_FAILED")
             }
         }
         cover.ensureOverlayRemoved()
@@ -203,7 +208,7 @@ constructor(
         }
     }
 
-    private fun release() {
+    private fun release(reason: String) {
         recordFront()
         coverFrame.release()
         cover.ensureOverlayRemoved()
@@ -213,7 +218,7 @@ constructor(
             runtimeState.overlayAttached = false
             runtimeState.phase = FoldAnimationPhase.IDLE
         }
-        log("cover overlay removed")
+        log("cover overlay removed reason=$reason")
         updateListening()
     }
 
@@ -244,13 +249,17 @@ constructor(
     /** A narrow internal display other than the default is the cover's own display. */
     private fun onDisplayAdded(displayId: Int) {
         if (displayId == Display.DEFAULT_DISPLAY || sequence.state != State.COVER_ON_DEFAULT) return
-        val display = displayManager.getDisplay(displayId) ?: return
-        val info = DisplayInfo().apply { display.getDisplayInfo(this) }
+        val info = naturalInfo(displayId) ?: return
         if (info.type != Display.TYPE_INTERNAL || info.naturalWidth >= panels.innerW) {
             log("cover display rejected id=$displayId type=${info.type} w=${info.naturalWidth}")
             return
         }
-        perform(sequence.onCoverDisplayAdded(displayId))
+        perform(sequence.onCoverDisplayAdded(displayId), "DISPLAY_ADDED")
+    }
+
+    private fun naturalInfo(displayId: Int): DisplayInfo? {
+        val display = displayManager.getDisplay(displayId) ?: return null
+        return DisplayInfo().apply { display.getDisplayInfo(this) }
     }
 
     /**
@@ -263,7 +272,7 @@ constructor(
             this@DuoCoverOpening.onDisplayAdded(displayId)
 
         override fun onDisplayRemoved(displayId: Int) =
-            perform(sequence.onCoverDisplayRemoved(displayId))
+            perform(sequence.onCoverDisplayRemoved(displayId), "DISPLAY_REMOVED")
 
         override fun onDisplayChanged(displayId: Int) = Unit
     }

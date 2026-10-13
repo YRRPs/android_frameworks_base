@@ -20,6 +20,7 @@ import android.hardware.devicestate.DeviceStateManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.DisplayManagerGlobal
 import android.os.Handler
+import android.provider.Settings
 import android.testing.TestableLooper
 import android.view.Display
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -32,6 +33,7 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.shared.model.ScreenPowerState
+import com.android.systemui.power.shared.model.WakefulnessModel
 import com.android.systemui.unfold.FakeUnfoldTransitionProvider
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
@@ -43,6 +45,7 @@ import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_H
 import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_ID
 import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_W
 import com.android.systemui.unfoldedDeviceState
+import com.android.systemui.util.animation.data.repository.FakeAnimationStatusRepository
 import com.android.systemui.util.concurrency.ThreadFactory
 import com.google.common.truth.Truth.assertThat
 import java.util.concurrent.CountDownLatch
@@ -88,6 +91,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     private val powerInteractor = mock<PowerInteractor>()
     private val screenPowerState = MutableStateFlow(ScreenPowerState.SCREEN_OFF)
     private val isAsleep = MutableStateFlow(false)
+    private val animationStatus = FakeAnimationStatusRepository()
     private val progressProvider = FakeUnfoldTransitionProvider()
     private val scope = TestScope(UnconfinedTestDispatcher())
     private val logBuffer = logcatLogBuffer("YrrpFoldAnimationLog")
@@ -117,6 +121,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         whenever(threadFactory.buildDelayableExecutorOnHandler(any())).thenReturn(mock())
         whenever(powerInteractor.screenPowerState).thenReturn(screenPowerState)
         whenever(powerInteractor.isAsleep).thenReturn(isAsleep)
+        whenever(powerInteractor.detailedWakefulness)
+            .thenReturn(MutableStateFlow(WakefulnessModel()))
         val handler = Handler(testableLooper.looper)
         hinge = FakeHingeSource(handler)
         frame = FakeCoverFrame(handler, logBuffer)
@@ -396,7 +402,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         processAll()
 
         verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(0))
-        verify(innerController, never()).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+        verify(innerController, never()).setBlurRegions(any())
     }
 
     @Test
@@ -548,6 +554,42 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
     }
 
+    @Test
+    fun aodScreenOn_doesNotStartHingeListening() {
+        isAsleep.value = true
+        processAll()
+        reportFolded(true)
+
+        underTest.onScreenTurningOn {} // AOD turns the cover on while asleep
+        processAll()
+
+        assertThat(hinge.isListening).isFalse()
+        isAsleep.value = false
+        processAll()
+        assertThat(hinge.isListening).isTrue()
+    }
+
+    @Test
+    fun animatorScaleZero_midOpen_cancelsTheCoverOpening() {
+        foldWithCoverOn()
+        hinge.report(30f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+
+        // TestableSettingsProvider clears this after the test.
+        Settings.Global.putString(
+            mContext.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            "0",
+        )
+        animationStatus.onAnimationStatusChanged(false)
+        processAll()
+
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(frame.releases).isEqualTo(1)
+        assertThat(hinge.isListening).isFalse()
+    }
+
     /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */
     private fun foldWithCoverOn() {
         reportFolded(true)
@@ -610,6 +652,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
                 logBuffer,
             ),
             displayManager,
+            animationStatus,
         )
 
     private fun captureDisplayListener(): DisplayManager.DisplayListener {

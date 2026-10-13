@@ -44,6 +44,7 @@ import com.android.systemui.unfold.UnfoldTransitionProgressProvider
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
+import com.android.systemui.util.animation.data.repository.AnimationStatusRepository
 import com.android.systemui.util.concurrency.ThreadFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
@@ -82,6 +83,7 @@ constructor(
     @YrrpFoldAnimationLog private val logBuffer: LogBuffer,
     private val coverOpening: DuoCoverOpening,
     private val displayManager: DisplayManager,
+    private val animationStatusRepository: AnimationStatusRepository,
 ) : FullscreenLightRevealAnimation {
 
     private lateinit var inner: FullscreenLightRevealAnimationController
@@ -110,12 +112,16 @@ constructor(
         bgProgressProvider.addCallback(ProgressListener())
         applicationScope.launch {
             powerInteractor.isAsleep.collect { asleep ->
-                if (asleep) {
-                    onBg {
-                        coverOpening.onScreenChanged(false)
-                        cancel("ASLEEP")
-                    }
+                onBg {
+                    coverOpening.onAwakeChanged(!asleep)
+                    if (asleep) cancel("ASLEEP")
                 }
+            }
+        }
+        // An animator duration scale of 0 turns Duo off the same way a style change does.
+        applicationScope.launch {
+            animationStatusRepository.areAnimationsEnabled().collect {
+                onBg { coverOpening.onStyleChanged() }
             }
         }
     }
@@ -130,15 +136,13 @@ constructor(
             overlayContainerName = title,
         )
 
-    private fun isDuo() =
-        selector.currentStyle() == FoldAnimationStyle.DUO && contentResolver.areAnimationsEnabled()
+    private fun isDuo() = selector.isDuoActive(contentResolver)
 
     /** The style setting changed; the cover hinge listens only for Duo. */
     fun onStyleChanged() = onBg { coverOpening.onStyleChanged() }
 
     @BinderThread
     override fun onScreenTurningOn(onOverlayReady: Runnable) = onBg {
-        coverOpening.onScreenChanged(true)
         // Consume the pending flags whatever the style, so a stale flag never leaks into a later
         // Duo transition.
         val unfold = !isFolded && pendingUnfold

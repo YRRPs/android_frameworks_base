@@ -29,11 +29,11 @@ class CoverHingeProgressTest : SysuiTestCase() {
     private val progress = CoverHingeProgress(openAngleDegrees = 165f)
 
     @Test
-    fun listensOnlyWhileFoldedScreenOnAndDuo() {
-        assertThat(progress.shouldListen(folded = true, screenOn = true, duo = true)).isTrue()
-        assertThat(progress.shouldListen(folded = false, screenOn = true, duo = true)).isFalse()
-        assertThat(progress.shouldListen(folded = true, screenOn = false, duo = true)).isFalse()
-        assertThat(progress.shouldListen(folded = true, screenOn = true, duo = false)).isFalse()
+    fun listensOnlyWhileFoldedAwakeAndDuo() {
+        assertThat(progress.shouldListen(folded = true, awake = true, duo = true)).isTrue()
+        assertThat(progress.shouldListen(folded = false, awake = true, duo = true)).isFalse()
+        assertThat(progress.shouldListen(folded = true, awake = false, duo = true)).isFalse()
+        assertThat(progress.shouldListen(folded = true, awake = true, duo = false)).isFalse()
     }
 
     @Test

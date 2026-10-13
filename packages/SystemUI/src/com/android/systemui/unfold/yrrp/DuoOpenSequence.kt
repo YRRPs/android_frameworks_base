@@ -24,7 +24,10 @@ package com.android.systemui.unfold.yrrp
  * display until system_server turns that display off. Pure state; DuoCoverOpening performs the
  * actions.
  */
-class DuoOpenSequence(openAngleDegrees: Float = DuoBlurCurve.OPEN_ANGLE_DEGREES) {
+class DuoOpenSequence(
+    /** Shared with the caller so the hinge maths is built once. */
+    val progress: CoverHingeProgress = CoverHingeProgress(DuoBlurCurve.OPEN_ANGLE_DEGREES),
+) {
     enum class State { DISARMED, IDLE, COVER_ON_DEFAULT, COVER_ON_OWN_DISPLAY }
 
     enum class Action {
@@ -44,8 +47,6 @@ class DuoOpenSequence(openAngleDegrees: Float = DuoBlurCurve.OPEN_ANGLE_DEGREES)
     /** True from the capture until the cover part is released. */
     val isActive: Boolean
         get() = state == State.COVER_ON_DEFAULT || state == State.COVER_ON_OWN_DISPLAY
-
-    private val progress = CoverHingeProgress(openAngleDegrees)
 
     fun onCoverAngle(angleDegrees: Float): Action {
         val open = progress.hasLeftClosed(angleDegrees)

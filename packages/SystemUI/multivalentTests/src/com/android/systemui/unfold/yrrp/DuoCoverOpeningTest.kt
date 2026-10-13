@@ -26,7 +26,8 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.power.domain.interactor.PowerInteractor
-import com.android.systemui.power.shared.model.ScreenPowerState
+import com.android.systemui.power.shared.model.WakefulnessModel
+import com.android.systemui.power.shared.model.WakefulnessState
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
 import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
@@ -60,7 +61,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     private val selector = FoldAnimationStyleSelector()
     private val runtime = FoldAnimationRuntimeState()
     private val cover = mock<FullscreenLightRevealAnimationController>()
-    private val screenPowerState = MutableStateFlow(ScreenPowerState.SCREEN_ON)
+    private val wakefulness = MutableStateFlow(WakefulnessModel())
     private val powerInteractor = mock<PowerInteractor>()
     private val displayManager = mock<DisplayManager>()
     private val displayGlobal = mock<DisplayManagerGlobal>()
@@ -78,7 +79,8 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         frame = FakeCoverFrame(handler, logBuffer)
         whenever(cover.setBlurRegions(any())).thenReturn(true)
         whenever(cover.isBlurAvailable()).thenReturn(true)
-        whenever(powerInteractor.screenPowerState).thenReturn(screenPowerState)
+        whenever(powerInteractor.detailedWakefulness).thenReturn(wakefulness)
+        stubDisplay(Display.DEFAULT_DISPLAY, COVER_W)
         stubDisplay(COVER_OWN_ID, COVER_W)
         selector.onSettingChanged(FoldAnimationStyle.DUO)
         underTest =
@@ -149,6 +151,21 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         verify(cover, atLeastOnce()).ensureOverlayRemoved()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
         assertThat(runtime.overlayAttached).isFalse()
+        assertThat(dumpedLog()).contains("cover overlay removed reason=HINGE_CLOSED")
+    }
+
+    @Test
+    fun defaultDisplayNotTheCover_skipsTheOpen() {
+        stubDisplay(Display.DEFAULT_DISPLAY, INNER_W)
+        startFolded()
+
+        openTo(30f)
+
+        assertThat(frame.captures).isEmpty()
+        verify(cover, never()).addOverlay(any(), anyOrNull(), any())
+        assertThat(underTest.isActive).isFalse()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(dumpedLog()).contains("cover opening skipped display0 not cover")
     }
 
     @Test
@@ -188,6 +205,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         assertThat(runtime.dualPanel).isFalse()
         assertThat(runtime.overlayAttached).isFalse()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(dumpedLog()).contains("cover overlay removed reason=DISPLAY_REMOVED")
     }
 
     @Test
@@ -254,6 +272,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         assertThat(frame.releases).isEqualTo(1)
         assertThat(underTest.isActive).isFalse()
         assertThat(hinge.isListening).isFalse()
+        assertThat(dumpedLog()).contains("cover overlay removed reason=UNFOLD_FINISHED")
     }
 
     @Test
@@ -307,9 +326,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
 
         underTest.onFoldChanged(true)
         processAll()
-        listOf(15f, 10f, 5f).forEach { hinge.report(it) }
-        underTest.onScreenChanged(true) // the cover's own screen-on
-        hinge.report(4f)
+        listOf(15f, 10f, 5f, 4f).forEach { hinge.report(it) }
         processAll()
 
         assertThat(frame.captures).isEmpty()
@@ -385,10 +402,10 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
-    fun screenOnAtInit_listensWithoutAScreenTurningOn() {
+    fun awakeAtInit_listensWithoutAWakeUp() {
         // A SystemUI restart with the cover on: the first fold report is folded and no
-        // onScreenChanged ever arrives.
-        screenPowerState.value = ScreenPowerState.SCREEN_ON
+        // onAwakeChanged ever arrives.
+        wakefulness.value = WakefulnessModel(internalWakefulnessState = WakefulnessState.AWAKE)
 
         startFolded()
 
@@ -398,13 +415,13 @@ class DuoCoverOpeningTest : SysuiTestCase() {
     }
 
     @Test
-    fun screenOffAtInit_waitsForScreenOn() {
-        screenPowerState.value = ScreenPowerState.SCREEN_OFF
+    fun asleepAtInit_waitsForAWakeUp() {
+        wakefulness.value = WakefulnessModel(internalWakefulnessState = WakefulnessState.ASLEEP)
 
         startFolded()
         assertThat(hinge.isListening).isFalse()
 
-        underTest.onScreenChanged(true)
+        underTest.onAwakeChanged(true)
         assertThat(hinge.isListening).isTrue()
     }
 
