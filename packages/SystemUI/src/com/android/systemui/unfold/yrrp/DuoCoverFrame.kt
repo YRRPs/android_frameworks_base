@@ -14,17 +14,20 @@
  * limitations under the License.
  */
 
-
 package com.android.systemui.unfold.yrrp
 
 import android.graphics.Bitmap
 import android.graphics.Rect
-import android.hardware.HardwareBuffer
+import android.hardware.DataSpace
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Display
 import android.view.SurfaceControl
 import android.view.SurfaceSession
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.LogLevel
+import com.android.systemui.log.dagger.YrrpFoldAnimationLog
 import com.android.systemui.screenshot.ImageCapture
 import com.android.systemui.unfold.dagger.UnfoldBg
 import com.android.wm.shell.displayareahelper.DisplayAreaHelper
@@ -32,10 +35,10 @@ import java.util.Optional
 import javax.inject.Inject
 
 /**
- * The frozen, blurred cover picture shown on the cover's own logical display while both panels
- * are lit during a Duo open. [capture] runs while the cover is still the default display; [show]
- * runs once the cover's logical display exists; [release] drops everything. All calls run on the
- * @UnfoldBg handler thread. Open for tests.
+ * The frozen cover picture with a blur layer above it, shown on the cover's own logical display
+ * while both panels are lit during a Duo open. [capture] runs while the cover is still the
+ * default display; [show] runs once the cover's logical display exists; [release] drops
+ * everything. All calls run on the @UnfoldBg handler thread. Open for tests.
  */
 open class DuoCoverFrame
 @Inject
@@ -43,13 +46,24 @@ constructor(
     private val imageCapture: ImageCapture,
     private val displayAreaHelper: Optional<DisplayAreaHelper>,
     @UnfoldBg private val bgHandler: Handler,
+    @YrrpFoldAnimationLog private val logBuffer: LogBuffer,
 ) {
     private var shot: Bitmap? = null
     private var container: SurfaceControl? = null
     private var picture: SurfaceControl? = null
     private var blur: SurfaceControl? = null
-    // A release() or a newer show() invalidates an in-flight show.
+    // capture(), show() and release() bump this; it invalidates an in-flight show.
     private var generation = 0
+
+    private class AttachRequest(
+        val displayId: Int,
+        val bounds: Rect,
+        val onShown: (Boolean) -> Unit,
+        val generation: Int,
+        val startMs: Long,
+    ) {
+        var attempts = 0
+    }
 
     open var displayId: Int = Display.INVALID_DISPLAY
         protected set
@@ -57,45 +71,61 @@ constructor(
     open val hasPicture: Boolean
         get() = shot != null
 
-    /** Captures [fromDisplayId]. Returns false if capture failed; the open then runs unfrozen. */
+    /**
+     * Captures [fromDisplayId]. Replaces and recycles the previous shot and cancels an in-flight
+     * [show]. Returns false if capture failed; the open then runs unfrozen.
+     */
     open fun capture(fromDisplayId: Int): Boolean {
         ensureOnBg()
+        generation++
+        removeLayers()
         shot?.recycle()
-        shot = imageCapture.captureDisplay(fromDisplayId)
-        return shot != null
+        shot = null
+        val captured =
+            runCatching { imageCapture.captureDisplay(fromDisplayId) }
+                .onFailure { log("cover frame capture failed exception=${it.javaClass.name}") }
+                .getOrNull()
+        if (captured == null) log("cover frame capture failed exception=none")
+        shot = captured
+        return captured != null
     }
 
     /**
-     * Attaches the picture and a blur layer sized [widthPx] x [heightPx] to [targetDisplayId].
-     * [onShown] runs on the bg thread with true once attached, or false if there is no picture,
-     * no DisplayAreaHelper, or a release() came first.
+     * Attaches the picture and a blur layer to [targetDisplayId]. [widthPx] x [heightPx] must
+     * match the captured display (the same cover panel); the picture is not scaled. [onShown]
+     * runs on the bg thread with true once attached. It runs with false when a newer [show],
+     * [capture] or [release] came first, when there is no picture or the bitmap is recycled or
+     * not a hardware bitmap, or when the display has no root display area within
+     * [ATTACH_TIMEOUT_MS]. With no picture or no DisplayAreaHelper, false is reported
+     * synchronously, before this returns.
      */
     open fun show(targetDisplayId: Int, widthPx: Int, heightPx: Int, onShown: (Boolean) -> Unit) {
         ensureOnBg()
-        val bitmap = shot
-        val helper = displayAreaHelper.orElse(null)
-        if (bitmap == null || helper == null) {
+        removeLayers()
+        val requested = ++generation
+        if (shot == null || !displayAreaHelper.isPresent) {
             onShown(false)
             return
         }
-        removeLayers()
-        val requested = ++generation
+        val request =
+            AttachRequest(
+                targetDisplayId,
+                Rect(0, 0, widthPx, heightPx),
+                onShown,
+                requested,
+                SystemClock.uptimeMillis(),
+            )
         val builder =
             SurfaceControl.Builder(SurfaceSession())
                 .setContainerLayer()
                 .setName("yrrp-duo-cover-frame")
-        helper.attachToRootDisplayArea(targetDisplayId, builder) { b ->
-            bgHandler.post {
-                val shown =
-                    requested == generation &&
-                        buildLayers(b, bitmap, Rect(0, 0, widthPx, heightPx))
-                if (shown) displayId = targetDisplayId
-                onShown(shown)
-            }
-        }
+        tryAttach(builder, request)
     }
 
-    /** Applies blur regions to the blur layer. Returns false before [show] completes. */
+    /**
+     * Applies blur regions to the blur layer. Returns false before [show] completes. The result
+     * does not depend on cross-window blur availability; the caller checks that.
+     */
     open fun setBlurRegions(regions: List<FloatArray>): Boolean {
         ensureOnBg()
         val layer = blur?.takeIf { it.isValid } ?: return false
@@ -112,36 +142,74 @@ constructor(
         shot = null
     }
 
+    private fun tryAttach(builder: SurfaceControl.Builder, request: AttachRequest) {
+        if (request.generation != generation) {
+            request.onShown(false)
+            return
+        }
+        request.attempts++
+        displayAreaHelper.get().tryAttachToRootDisplayArea(request.displayId, builder) { b, ok ->
+            bgHandler.post { onAttachResult(b, ok, request) }
+        }
+    }
+
+    private fun onAttachResult(
+        builder: SurfaceControl.Builder,
+        attached: Boolean,
+        request: AttachRequest,
+    ) {
+        if (request.generation != generation) {
+            request.onShown(false)
+            return
+        }
+        val timedOut = SystemClock.uptimeMillis() - request.startMs >= ATTACH_TIMEOUT_MS
+        if (!attached && !timedOut) {
+            bgHandler.postDelayed({ tryAttach(builder, request) }, ATTACH_RETRY_MS)
+            return
+        }
+        val shown = attached && buildLayers(builder, request.bounds)
+        if (shown) displayId = request.displayId
+        val (id, attempts) = request.displayId to request.attempts
+        log("cover frame attach display=$id attempts=$attempts ok=$shown")
+        request.onShown(shown)
+    }
+
     /** Builds the container and its two children from the attached [containerBuilder]. */
-    private fun buildLayers(
-        containerBuilder: SurfaceControl.Builder,
-        bitmap: Bitmap,
-        bounds: Rect,
-    ): Boolean {
-        val buffer: HardwareBuffer = bitmap.hardwareBuffer ?: return false
+    private fun buildLayers(containerBuilder: SurfaceControl.Builder, bounds: Rect): Boolean {
+        val bitmap = shot ?: return false
+        if (bitmap.isRecycled || bitmap.config != Bitmap.Config.HARDWARE) return false
         val root = containerBuilder.build()
         val pictureLayer =
-            SurfaceControl.Builder(SurfaceSession())
-                .setBLASTLayer()
-                .setName("yrrp-duo-cover-picture")
+            SurfaceControl.Builder()
                 .setParent(root)
+                .setBLASTLayer()
+                .setOpaque(true)
+                .setCallsite("DuoCoverFrame")
+                .setName("yrrp-duo-cover-picture")
                 .build()
         val blurLayer =
-            SurfaceControl.Builder(SurfaceSession())
-                .setEffectLayer()
-                .setName("yrrp-duo-cover-blur")
+            SurfaceControl.Builder()
                 .setParent(root)
+                .setEffectLayer()
+                .setCallsite("DuoCoverFrame")
+                .setName("yrrp-duo-cover-blur")
                 .build()
-        SurfaceControl.Transaction()
-            .setLayer(root, OVERLAY_LAYER_Z_INDEX)
-            .setLayer(pictureLayer, 0)
-            .setLayer(blurLayer, 1)
-            .setBuffer(pictureLayer, buffer)
-            .setCrop(blurLayer, bounds)
-            .show(root)
-            .show(pictureLayer)
-            .show(blurLayer)
-            .apply()
+        bitmap.hardwareBuffer.use { buffer ->
+            val transaction =
+                SurfaceControl.Transaction()
+                    .setLayer(root, OVERLAY_LAYER_Z_INDEX)
+                    .setLayer(pictureLayer, 0)
+                    .setLayer(blurLayer, 1)
+                    .setBuffer(pictureLayer, buffer)
+                    .setDataSpace(
+                        pictureLayer,
+                        bitmap.colorSpace?.dataSpace ?: DataSpace.DATASPACE_SRGB,
+                    )
+                    .setCrop(blurLayer, bounds)
+            // Avoid the HDR dimming effect on a frozen picture, as the transition animations do.
+            if (bitmap.hasGainmap()) transaction.setDimmingEnabled(pictureLayer, false)
+            transaction.show(root).show(pictureLayer).show(blurLayer).apply()
+        }
         container = root
         picture = pictureLayer
         blur = blurLayer
@@ -161,13 +229,19 @@ constructor(
         displayId = Display.INVALID_DISPLAY
     }
 
+    private fun log(message: String) =
+        logBuffer.log(TAG, LogLevel.DEBUG, { str1 = message }, { str1!! })
+
     private fun ensureOnBg() =
         check(Looper.myLooper() == bgHandler.looper) {
             "DuoCoverFrame must be used on the @UnfoldBg handler"
         }
 
-    private companion object {
+    companion object {
+        private const val TAG = "YrrpFoldAnimation"
+        const val ATTACH_RETRY_MS = 50L
+        const val ATTACH_TIMEOUT_MS = 500L
         // One below the rotation-animation overlay, as FullscreenLightRevealAnimation uses.
-        const val OVERLAY_LAYER_Z_INDEX = Integer.MAX_VALUE - 1
+        private const val OVERLAY_LAYER_Z_INDEX = Integer.MAX_VALUE - 1
     }
 }

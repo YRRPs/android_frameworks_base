@@ -18,6 +18,7 @@ package com.android.wm.shell.displayareahelper;
 
 import android.view.SurfaceControl;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -34,6 +35,18 @@ public interface DisplayAreaHelper {
      */
     default void attachToRootDisplayArea(int displayId, SurfaceControl.Builder builder,
             Consumer<SurfaceControl.Builder> onUpdated) {
+    }
+
+    /**
+     * Like {@link #attachToRootDisplayArea}, but reports whether the builder was attached.
+     * Shell may not have a root display area for a display that was only just created.
+     *
+     * @param onResult invoked on the shell main thread with the builder and whether it was
+     *                 attached to the display's root display area
+     */
+    default void tryAttachToRootDisplayArea(int displayId, SurfaceControl.Builder builder,
+            BiConsumer<SurfaceControl.Builder, Boolean> onResult) {
+        attachToRootDisplayArea(displayId, builder, b -> onResult.accept(b, true));
     }
 
 }
