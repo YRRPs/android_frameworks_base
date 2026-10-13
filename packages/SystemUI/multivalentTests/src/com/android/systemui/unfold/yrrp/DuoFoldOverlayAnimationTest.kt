@@ -590,6 +590,68 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(hinge.isListening).isFalse()
     }
 
+    @Test
+    fun foldOnInner_reportsFoldStartedToDisplayManager() {
+        selector.onGatedTransitionStarted(progressProvider)
+
+        progressProvider.onTransitionStarted()
+        processAll()
+
+        verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_STARTED)
+    }
+
+    @Test
+    fun coverRevealEnd_reportsFoldFinished() {
+        reportFolded(false)
+        reportFolded(true)
+        underTest.onScreenTurningOn {}
+        processAll()
+        verify(displayManager, never()).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+
+        underTest.onCoverScreenOn()
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+
+        verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+    }
+
+    @Test
+    fun foldWithScreenStillOn_startsCoverRevealWithoutScreenOnHandshake() {
+        screenPowerState.value = ScreenPowerState.SCREEN_ON
+        reportFolded(false)
+
+        reportFolded(true)
+        processAll()
+
+        verify(coverController)
+            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.MAX_BLUR_PX))
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_REVEAL)
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+
+        // The handshake that may still follow does not start a second reveal.
+        clearInvocations(coverController)
+        underTest.onScreenTurningOn {}
+        processAll()
+        verify(coverController, never()).addOverlay(any(), anyOrNull(), any())
+    }
+
+    @Test
+    fun foldAbandonedNearOpen_reportsFoldFinished() {
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        progressProvider.onTransitionProgress(0.95f)
+        processAll()
+
+        progressProvider.onTransitionFinished()
+        processAll()
+
+        verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+    }
+
     /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */
     private fun foldWithCoverOn() {
         reportFolded(true)

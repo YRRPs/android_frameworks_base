@@ -253,6 +253,11 @@ interface IDisplayManager {
     @EnforcePermission("MANAGE_DISPLAYS")
     boolean requestDisplayPower(int displayId, int state);
 
+    // YRRP Duo: SystemUI reports that its fold animation started or finished, so both panels
+    // stay lit while it runs.
+    @EnforcePermission("MANAGE_DISPLAYS")
+    oneway void setDuoFoldPhase(int phase);
+
     // Sets the connection preference for external display.
     @EnforcePermission("MANAGE_DISPLAYS")
     void setConnectionPreference(String uniqueId, int preference);

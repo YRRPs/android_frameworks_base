@@ -641,6 +641,19 @@ public final class DisplayManagerGlobal {
         }
     }
 
+    /**
+     * YRRP Duo: reports the fold animation phase, {@link DisplayManager#DUO_FOLD_PHASE_STARTED}
+     * or {@link DisplayManager#DUO_FOLD_PHASE_FINISHED}. Requires {@code MANAGE_DISPLAYS}.
+     * @hide
+     */
+    public void setDuoFoldPhase(int phase) {
+        try {
+            mDm.setDuoFoldPhase(phase);
+        } catch (RemoteException ex) {
+            Log.e(TAG, "Error reporting the Duo fold phase", ex);
+        }
+    }
+
 
     /**
      * Disable a connected display that is currently enabled.

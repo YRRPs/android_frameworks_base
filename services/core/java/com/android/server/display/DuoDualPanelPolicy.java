@@ -17,9 +17,9 @@
 package com.android.server.display;
 
 /**
- * YRRP Duo: whether a device-state change keeps the outgoing (cover) panel lit while the inner
- * panel turns on. Only a fold-to-unfold change qualifies, with the Duo fold animation active and
- * the device interactive. Pure, so it runs without a device.
+ * YRRP Duo: whether a device-state change keeps the outgoing panel lit, out of the transition
+ * blanking, while the incoming panel turns on. An unfold keeps the cover lit; a fold keeps the
+ * inner panel lit until the cover is on. Pure, so it runs without a device.
  */
 final class DuoDualPanelPolicy {
     private DuoDualPanelPolicy() {}
@@ -27,5 +27,15 @@ final class DuoDualPanelPolicy {
     static boolean keepsOutgoingLit(boolean fromInnerPrimary, boolean toInnerPrimary,
             boolean duoActive, boolean interactive) {
         return !fromInnerPrimary && toInnerPrimary && duoActive && interactive;
+    }
+
+    /**
+     * A fold from an inner-primary to a cover-primary state, with the Duo fold animation active,
+     * the device interactive, and the fold not putting the device to sleep. A fold that sleeps
+     * keeps the stock blanking, so the sleep and the keyguard see the order they expect.
+     */
+    static boolean keepsOutgoingLitOnFold(boolean fromInnerPrimary, boolean toInnerPrimary,
+            boolean duoActive, boolean interactive, boolean sleepsOnFold) {
+        return fromInnerPrimary && !toInnerPrimary && duoActive && interactive && !sleepsOnFold;
     }
 }

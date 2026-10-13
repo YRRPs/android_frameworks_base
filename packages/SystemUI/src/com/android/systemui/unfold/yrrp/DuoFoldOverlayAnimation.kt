@@ -64,6 +64,10 @@ import kotlinx.coroutines.withTimeout
  * [DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS]. Folding: the inner blur grows back, then the cover
  * screen turns on blurred and sweeps clear left to right over [COVER_REVEAL_MS]. Runs only
  * while the latched style is Duo; every exit removes the overlays and the frame.
+ *
+ * While folding, it tells system_server the fold animation started and finished, so both panels
+ * stay lit for the whole animation: the cover from the start of the fold, and the inner panel
+ * until the cover reveal ends.
  */
 @SysUIUnfoldScope
 class DuoFoldOverlayAnimation
@@ -96,6 +100,7 @@ constructor(
     private var coverBlurredShare = 0f
     private var coverAnimator: ValueAnimator? = null
     private var coverWaitJob: Job? = null
+    private var foldPhaseStarted = false
 
     override fun init() {
         inner = createController(INNER_OVERLAY_TITLE) { maxByOrNull { it.naturalWidth } }
@@ -282,7 +287,10 @@ constructor(
             // A cancel already cleaned up or superseded this run.
             if (!cancelled) {
                 onBg {
-                    if (runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) detach(cover)
+                    if (runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {
+                        detach(cover)
+                        reportFoldFinished("REVEALED")
+                    }
                 }
             }
         }
@@ -299,6 +307,10 @@ constructor(
     }
 
     private fun cancel(reason: String) {
+        val folding =
+            runtimeState.phase == FoldAnimationPhase.FOLDING ||
+                runtimeState.phase == FoldAnimationPhase.COVER_REVEAL
+        if (folding) reportFoldFinished(reason)
         val active = runtimeState.overlayAttached || coverOpening.isActive
         coverOpening.cancel(reason)
         when (runtimeState.phase) {
@@ -331,6 +343,7 @@ constructor(
                 lastInnerProgress = 1f
                 attach(inner, FoldAnimationPhase.FOLDING, Runnable {}, initialBlurPx = 0)
                 inner.isTouchBlocked = true
+                reportFoldStarted()
             }
         }
 
@@ -348,7 +361,12 @@ constructor(
         }
 
         override fun onTransitionFinished() = onBg {
+            // A fold that ends back near open was abandoned: the cover lit for it can go off.
+            val abandonedFold =
+                runtimeState.phase == FoldAnimationPhase.FOLDING &&
+                    lastInnerProgress >= ABANDONED_FOLD_PROGRESS
             if (runtimeState.phase in INNER_PHASES) detach(inner)
+            if (abandonedFold) reportFoldFinished("ABANDONED")
             coverOpening.onUnfoldFinished()
         }
     }
@@ -374,10 +392,34 @@ constructor(
             // screen's.
             pendingUnfold = true
             pendingCoverReveal = true
+            // system_server kept the cover lit through the fold, so no screen-on follows: the
+            // cover reveal starts now, on the screen that is already on.
+            if (isDuo() && powerInteractor.screenPowerState.value == ScreenPowerState.SCREEN_ON) {
+                pendingCoverReveal = false
+                startCoverReveal(Runnable {})
+            }
         } else {
             pendingCoverReveal = false
         }
         coverOpening.onFoldChanged(folded)
+    }
+
+    /** Tells system_server the fold animation started, so it lights the cover alongside. */
+    private fun reportFoldStarted() {
+        if (foldPhaseStarted) return
+        foldPhaseStarted = true
+        displayManager.setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_STARTED)
+        log("fold phase started")
+    }
+
+    /**
+     * Tells system_server the fold animation finished, so it turns the panel it kept lit off.
+     * Sent even without a started report: a fast fold gets its session at the screen switch.
+     */
+    private fun reportFoldFinished(reason: String) {
+        foldPhaseStarted = false
+        displayManager.setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+        log("fold phase finished reason=$reason")
     }
 
     private fun onBg(f: () -> Unit) {
@@ -396,5 +438,7 @@ constructor(
         const val COVER_REVEAL_MS = 350L
         const val READY_TIMEOUT_MS = 2000L
         const val SAFETY_TIMEOUT_MS = 5000L
+        /** A fold whose transition finishes at or above this progress went back to open. */
+        const val ABANDONED_FOLD_PROGRESS = 0.5f
     }
 }
