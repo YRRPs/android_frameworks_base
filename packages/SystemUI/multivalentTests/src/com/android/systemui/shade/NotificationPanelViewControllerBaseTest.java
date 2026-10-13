@@ -520,6 +520,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
 
         mNotificationPanelViewController = new NotificationPanelViewController(
                 mView,
+                mMainHandler,
                 coordinator, expansionHandler, mDynamicPrivacyController, mKeyguardBypassController,
                 mFalsingManager, new FalsingCollectorFake(),
                 mKeyguardStateController,
@@ -550,6 +551,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 mQsController,
                 mFragmentService,
                 mStatusBarService,
+                mContext.getContentResolver(),
                 mShadeHeaderController,
                 mScreenOffAnimationController,
                 mLockscreenGestureLogger,
