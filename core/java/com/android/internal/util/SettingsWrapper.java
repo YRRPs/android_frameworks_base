@@ -33,4 +33,15 @@ public class SettingsWrapper {
     public String putStringForUser(ContentResolver contentResolver, String name, int userHandle) {
         return Settings.System.getStringForUser(contentResolver, name, userHandle);
     }
+
+    /** Retrieves the int value of a secure setting */
+    public int getSecureIntForUser(ContentResolver contentResolver, String name, int def,
+            int userHandle) {
+        return Settings.Secure.getIntForUser(contentResolver, name, def, userHandle);
+    }
+
+    /** Retrieves the float value of a global setting */
+    public float getGlobalFloat(ContentResolver contentResolver, String name, float def) {
+        return Settings.Global.getFloat(contentResolver, name, def);
+    }
 }

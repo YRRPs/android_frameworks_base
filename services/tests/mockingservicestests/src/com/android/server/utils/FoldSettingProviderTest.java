@@ -22,7 +22,11 @@ import static com.android.server.utils.FoldSettingProvider.SETTING_VALUE_STAY_AW
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyFloat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.ContentResolver;
@@ -130,6 +134,56 @@ public class FoldSettingProviderTest {
                 mFoldSettingProvider.shouldSelectiveStayAwakeOnFold();
 
         assertThat(shouldSelectiveStayAwakeOnFold).isTrue();
+    }
+
+    @Test
+    public void duoStyleWithAnimationsOn_isDuoFoldAnimationActive() {
+        setFoldAnimationStyle(2);
+        setAnimatorDurationScale(1f);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isTrue();
+    }
+
+    @Test
+    public void otherStyle_isDuoFoldAnimationInactive() {
+        setFoldAnimationStyle(1);
+        setAnimatorDurationScale(1f);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+    }
+
+    @Test
+    public void otherStyle_skipsTheAnimatorScaleRead() {
+        setFoldAnimationStyle(1);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+        verify(mSettingsWrapper, never()).getGlobalFloat(any(),
+                eq(Settings.Global.ANIMATOR_DURATION_SCALE), anyFloat());
+    }
+
+    @Test
+    public void duoStyleWithAnimationsOff_isDuoFoldAnimationInactive() {
+        setFoldAnimationStyle(2);
+        setAnimatorDurationScale(0f);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+    }
+
+    @Test
+    public void styleNotDefined_isDuoFoldAnimationInactive() {
+        setAnimatorDurationScale(1f);
+
+        assertThat(mFoldSettingProvider.isDuoFoldAnimationActive()).isFalse();
+    }
+
+    private void setFoldAnimationStyle(int style) {
+        when(mSettingsWrapper.getSecureIntForUser(any(), eq("lineage_fold_animation"), anyInt(),
+                eq(UserHandle.USER_CURRENT))).thenReturn(style);
+    }
+
+    private void setAnimatorDurationScale(float scale) {
+        when(mSettingsWrapper.getGlobalFloat(any(), eq(Settings.Global.ANIMATOR_DURATION_SCALE),
+                anyFloat())).thenReturn(scale);
     }
 
     private void setFoldLockBehaviorAvailability(boolean isFoldLockBehaviorEnabled) {

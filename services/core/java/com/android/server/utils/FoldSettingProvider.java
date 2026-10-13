@@ -49,6 +49,10 @@ public class FoldSettingProvider {
     private static final Set<String> SETTING_VALUES = Set.of(SETTING_VALUE_STAY_AWAKE_ON_FOLD,
             SETTING_VALUE_SELECTIVE_STAY_AWAKE, SETTING_VALUE_SLEEP_ON_FOLD);
     private static final String TAG = "FoldSettingProvider";
+    // Must match SystemUI (com.android.systemui.unfold.yrrp): the key is SETTING_KEY in
+    // FoldAnimationSettingsRepository.kt, and 2 is FoldAnimationStyle.DUO in FoldAnimationStyle.kt.
+    private static final String YRRP_FOLD_ANIMATION = "lineage_fold_animation";
+    private static final int YRRP_FOLD_DUO = 2;
 
     private final ContentResolver mContentResolver;
     private final SettingsWrapper mSettingsWrapper;
@@ -80,6 +84,20 @@ public class FoldSettingProvider {
      */
     public boolean shouldSleepOnFold() {
         return getFoldSettingValue().equals(SETTING_VALUE_SLEEP_ON_FOLD);
+    }
+
+    /**
+     * Returns whether the YRRP Duo fold animation is selected and animations are not disabled.
+     */
+    public boolean isDuoFoldAnimationActive() {
+        int style = mSettingsWrapper.getSecureIntForUser(mContentResolver, YRRP_FOLD_ANIMATION,
+                0, UserHandle.USER_CURRENT);
+        if (style != YRRP_FOLD_DUO) {
+            return false;
+        }
+        float animatorScale = mSettingsWrapper.getGlobalFloat(mContentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
+        return animatorScale != 0f;
     }
 
     private String getFoldSettingValue() {

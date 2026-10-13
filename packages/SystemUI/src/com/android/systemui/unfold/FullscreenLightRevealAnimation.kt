@@ -80,6 +80,10 @@ constructor(
     private lateinit var wwm: WindowlessWindowManager
 
     private var currentRotation: Int = context.display.rotation
+
+    /** The default display's current Surface rotation, which the overlay surface follows. */
+    val rotation: Int
+        get() = currentRotation
     private var root: SurfaceControlViewHost? = null
 
     /** The scrim view that is used to reveal the screen. */
@@ -154,16 +158,27 @@ constructor(
     }
 
     /**
-     * Blurs everything below the overlay window. Returns false when no overlay is attached or
-     * cross-window blur is unavailable (for example under Battery Saver).
+     * Blurs only the given regions below the overlay window. Rows are BlurRegion#toFloatArray
+     * rows. An empty list clears the blur. Regions replace the uniform blur [addOverlay] may have
+     * started with: a surface holds one or the other. Returns false and leaves the previous blur
+     * unchanged when nothing can be applied (no overlay attached, or cross-window blur
+     * unavailable).
      */
-    fun setBackgroundBlurRadius(radiusPx: Int): Boolean {
-        ensureInBackground()
-        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return false
-        if (!surface.isValid) return false
-        if (radiusPx > 0 && !isBlurAvailable()) return false
-        SurfaceControl.Transaction().setBackgroundBlurRadius(surface, radiusPx).apply()
+    fun setBlurRegions(regions: List<FloatArray>): Boolean {
+        val surface = blurSurfaceOrNull(addsBlur = regions.isNotEmpty()) ?: return false
+        SurfaceControl.Transaction()
+            .setBackgroundBlurRadius(surface, 0)
+            .setBlurRegions(surface, regions.toTypedArray())
+            .apply()
         return true
+    }
+
+    private fun blurSurfaceOrNull(addsBlur: Boolean): SurfaceControl? {
+        ensureInBackground()
+        val surface = scrimView?.viewRootImpl?.surfaceControl ?: return null
+        if (!surface.isValid) return null
+        if (addsBlur && !isBlurAvailable()) return null
+        return surface
     }
 
     /** Whether cross-window blur is on now; Battery Saver and thermal limits turn it off. */

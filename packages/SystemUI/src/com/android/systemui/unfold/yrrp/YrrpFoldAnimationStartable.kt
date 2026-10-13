@@ -28,9 +28,11 @@ import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.LogLevel
 import com.android.systemui.log.dagger.YrrpFoldAnimationLog
 import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.unfold.SysUIUnfoldComponent
 import com.android.systemui.unfold.config.UnfoldTransitionConfig
 import com.android.systemui.unfold.util.ScaleAwareTransitionProgressProvider.Companion.areAnimationsEnabled
 import java.io.PrintWriter
+import java.util.Optional
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -39,7 +41,8 @@ import kotlinx.coroutines.delay
 /**
  * Feeds the per-user setting into [FoldAnimationStyleSelector], logs latch transitions, releases a
  * stuck latch on sleep or after [LATCH_TIMEOUT_MS], keeps the fold-lock setting at Always while
- * Duo is on ([DuoFoldLockEnforcer]), and dumps every gate. Dump:
+ * Duo is on ([DuoFoldLockEnforcer]), tells [DuoFoldOverlayAnimation] when the style setting
+ * changes, and dumps every gate. Dump:
  * `dumpsys activity service com.android.systemui/.SystemUIService YrrpFoldAnimation
  * YrrpFoldAnimationLog`.
  */
@@ -56,6 +59,7 @@ class YrrpFoldAnimationStartable(
     private val backgroundScope: CoroutineScope,
     private val animationsEnabled: () -> Boolean,
     foldLockSettings: FoldLockSettings,
+    private val onStyleChanged: () -> Unit = {},
 ) : CoreStartable, Dumpable {
 
     @Inject
@@ -71,6 +75,7 @@ class YrrpFoldAnimationStartable(
         @Background backgroundScope: CoroutineScope,
         contentResolver: ContentResolver,
         foldLockSettings: FoldLockSettingsRepository,
+        unfoldComponent: Optional<SysUIUnfoldComponent>,
     ) : this(
         repository,
         selector,
@@ -83,6 +88,7 @@ class YrrpFoldAnimationStartable(
         backgroundScope,
         { contentResolver.areAnimationsEnabled() },
         foldLockSettings,
+        { unfoldComponent.ifPresent { it.getDuoFoldOverlayAnimation().onStyleChanged() } },
     )
 
     private val foldLock = DuoFoldLockEnforcer(foldLockSettings, ::log)
@@ -124,6 +130,7 @@ class YrrpFoldAnimationStartable(
             repository.setting.collect { raw ->
                 val style = FoldAnimationStyle.fromRaw(raw)
                 selector.onSettingChanged(style)
+                onStyleChanged()
                 log("setting raw=$raw style=$style")
             }
         }
@@ -176,6 +183,9 @@ class YrrpFoldAnimationStartable(
         pw.println("hingeSensorPresent=${support.hingeSensorPresent}")
         pw.println("animationsEnabled=$animations")
         pw.println("blurAvailable=${runtimeState.blurAvailable}")
+        pw.println("dualPanel=${runtimeState.dualPanel}")
+        pw.println("coverBlurFrontPx=${runtimeState.coverBlurFrontPx}")
+        pw.println("innerBlurFrontPx=${runtimeState.innerBlurFrontPx}")
         pw.println("eligible=${blocked == "NONE"}")
         pw.println("blockedBy=$blocked")
         pw.println("phase=${runtimeState.phase}")

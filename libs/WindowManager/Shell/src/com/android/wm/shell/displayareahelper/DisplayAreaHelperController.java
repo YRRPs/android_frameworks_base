@@ -21,6 +21,7 @@ import android.view.SurfaceControl;
 import com.android.wm.shell.RootDisplayAreaOrganizer;
 
 import java.util.concurrent.Executor;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 public class DisplayAreaHelperController implements DisplayAreaHelper {
@@ -41,5 +42,12 @@ public class DisplayAreaHelperController implements DisplayAreaHelper {
             mRootDisplayAreaOrganizer.attachToDisplayArea(displayId, builder);
             onUpdated.accept(builder);
         });
+    }
+
+    @Override
+    public void tryAttachToRootDisplayArea(int displayId, SurfaceControl.Builder builder,
+            BiConsumer<SurfaceControl.Builder, Boolean> onResult) {
+        mExecutor.execute(() -> onResult.accept(builder,
+                mRootDisplayAreaOrganizer.tryAttachToDisplayArea(displayId, builder)));
     }
 }

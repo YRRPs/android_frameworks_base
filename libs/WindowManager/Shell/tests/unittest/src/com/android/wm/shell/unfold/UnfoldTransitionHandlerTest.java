@@ -142,6 +142,18 @@ public class UnfoldTransitionHandlerTest extends ShellTestCase {
     }
 
     @Test
+    public void duoStyle_doesNotClaimTheTransition() {
+        mStyle = UnfoldAnimationStyleProvider.STYLE_DUO;
+        TransitionRequestInfo requestInfo = createUnfoldTransitionRequestInfo();
+
+        WindowContainerTransaction result = mUnfoldTransitionHandler.handleRequest(
+                mTransition, requestInfo);
+
+        assertThat(result).isNull();
+        assertThat(mUnfoldTransitionHandler.willHandleTransition()).isFalse();
+    }
+
+    @Test
     public void handleRequest_physicalDisplayChangeFold_doesNotHandleTransition() {
         ActivityManager.RunningTaskInfo triggerTaskInfo = new ActivityManager.RunningTaskInfo();
         TransitionRequestInfo.DisplayChange displayChange = new TransitionRequestInfo.DisplayChange(

@@ -62,10 +62,21 @@ public class RootDisplayAreaOrganizer extends DisplayAreaOrganizer {
     }
 
     public void attachToDisplayArea(int displayId, SurfaceControl.Builder b) {
+        tryAttachToDisplayArea(displayId, b);
+    }
+
+    /**
+     * Parents {@code b} to the root display area of {@code displayId}.
+     *
+     * @return false, leaving {@code b} untouched, if Shell has no leash for the display yet
+     */
+    public boolean tryAttachToDisplayArea(int displayId, SurfaceControl.Builder b) {
         final SurfaceControl sc = mLeashes.get(displayId);
-        if (sc != null) {
-            b.setParent(sc);
+        if (sc == null) {
+            return false;
         }
+        b.setParent(sc);
+        return true;
     }
 
     @Override

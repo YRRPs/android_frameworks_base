@@ -314,10 +314,13 @@ public class UnfoldTransitionHandler implements TransitionHandler, UnfoldListene
 
     /** Whether `request` contains an unfold action. */
     public boolean shouldPlayUnfoldAnimation(@NonNull TransitionRequestInfo request) {
-        // YRRP: in Stock no progress arrives, so claiming would hold the display switch for
-        // FINISH_ANIMATION_TIMEOUT_MILLIS.
-        if (mStyleProvider.map(p -> p.getUnfoldAnimationStyle()
-                == UnfoldAnimationStyleProvider.STYLE_STOCK).orElse(false)) {
+        // YRRP: Stock and Duo leave tasks alone, so the handler must not hold the display switch
+        // waiting for progress (FINISH_ANIMATION_TIMEOUT_MILLIS).
+        if (mStyleProvider.map(p -> {
+                    final int style = p.getUnfoldAnimationStyle();
+                    return style == UnfoldAnimationStyleProvider.STYLE_STOCK
+                            || style == UnfoldAnimationStyleProvider.STYLE_DUO;
+                }).orElse(false)) {
             return false;
         }
 

@@ -25,6 +25,8 @@ enum class FoldAnimationPhase {
     UNFOLDING,
     FOLDING,
     COVER_REVEAL,
+    /** The cover blurs with the hinge before the unfold transition takes over. */
+    COVER_OPENING,
 }
 
 /** State the Duo overlay owns and the dump reads; written on the unfold bg thread. */
@@ -33,6 +35,17 @@ class FoldAnimationRuntimeState @Inject constructor() {
     @Volatile var phase = FoldAnimationPhase.IDLE
     @Volatile var overlayAttached = false
     @Volatile var blurAvailable = true
+
+    /** True while the frozen cover picture is shown on the cover's own logical display. */
+    @Volatile var dualPanel = false
+
+    /**
+     * Blur fronts in px (where blurred meets sharp), recorded at transition start, end and
+     * cancel, never per frame; -1 when none was recorded.
+     */
+    @Volatile var coverBlurFrontPx = -1
+    @Volatile var innerBlurFrontPx = -1
+
     @Volatile
     var lastCancelReason = NONE
         private set

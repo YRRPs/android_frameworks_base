@@ -17,8 +17,12 @@
 package com.android.systemui.unfold.yrrp
 
 import android.hardware.devicestate.DeviceStateManager
+import android.hardware.display.DisplayManager
+import android.hardware.display.DisplayManagerGlobal
 import android.os.Handler
+import android.provider.Settings
 import android.testing.TestableLooper
+import android.view.Display
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.R
@@ -29,10 +33,19 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.shared.model.ScreenPowerState
+import com.android.systemui.power.shared.model.WakefulnessModel
 import com.android.systemui.unfold.FakeUnfoldTransitionProvider
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController
 import com.android.systemui.unfold.FullscreenLightRevealAnimationController.Companion.ALPHA_TRANSPARENT
+import com.android.systemui.unfold.yrrp.DuoBlurCurve.Anchor
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_H
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_OWN_ID
+import com.android.systemui.unfold.yrrp.DuoTestPanels.COVER_W
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_H
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_ID
+import com.android.systemui.unfold.yrrp.DuoTestPanels.INNER_W
 import com.android.systemui.unfoldedDeviceState
+import com.android.systemui.util.animation.data.repository.FakeAnimationStatusRepository
 import com.android.systemui.util.concurrency.ThreadFactory
 import com.google.common.truth.Truth.assertThat
 import java.util.concurrent.CountDownLatch
@@ -52,6 +65,8 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
@@ -76,8 +91,15 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     private val powerInteractor = mock<PowerInteractor>()
     private val screenPowerState = MutableStateFlow(ScreenPowerState.SCREEN_OFF)
     private val isAsleep = MutableStateFlow(false)
+    private val animationStatus = FakeAnimationStatusRepository()
     private val progressProvider = FakeUnfoldTransitionProvider()
     private val scope = TestScope(UnconfinedTestDispatcher())
+    private val logBuffer = logcatLogBuffer("YrrpFoldAnimationLog")
+    private val displayManager = mock<DisplayManager>()
+    private val displayGlobal = mock<DisplayManagerGlobal>()
+    private lateinit var hinge: FakeHingeSource
+    private lateinit var frame: FakeCoverFrame
+    private lateinit var displayListener: DisplayManager.DisplayListener
     private lateinit var testableLooper: TestableLooper
     private lateinit var underTest: DuoFoldOverlayAnimation
     private lateinit var foldListener: DeviceStateManager.DeviceStateCallback
@@ -89,8 +111,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
             R.array.config_foldedDeviceStates,
             intArrayOf(foldedState.identifier),
         )
-        whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(true)
-        whenever(coverController.setBackgroundBlurRadius(any())).thenReturn(true)
+        whenever(innerController.setBlurRegions(any())).thenReturn(true)
+        whenever(coverController.setBlurRegions(any())).thenReturn(true)
         whenever(innerController.isBlurAvailable()).thenReturn(true)
         whenever(coverController.isBlurAvailable()).thenReturn(true)
         whenever(factory.create(any(), any(), any()))
@@ -99,10 +121,23 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         whenever(threadFactory.buildDelayableExecutorOnHandler(any())).thenReturn(mock())
         whenever(powerInteractor.screenPowerState).thenReturn(screenPowerState)
         whenever(powerInteractor.isAsleep).thenReturn(isAsleep)
+        whenever(powerInteractor.detailedWakefulness)
+            .thenReturn(MutableStateFlow(WakefulnessModel()))
+        val handler = Handler(testableLooper.looper)
+        hinge = FakeHingeSource(handler)
+        frame = FakeCoverFrame(handler, logBuffer)
+        val coverDisplay = display(Display.DEFAULT_DISPLAY, COVER_W, COVER_H)
+        val innerDisplay = display(INNER_ID, INNER_W, INNER_H)
+        val allDisplays = DisplayManager.DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED
+        whenever(displayManager.getDisplays(allDisplays))
+            .thenReturn(arrayOf(coverDisplay, innerDisplay))
+        whenever(displayManager.getDisplay(COVER_OWN_ID))
+            .thenReturn(display(COVER_OWN_ID, COVER_W, COVER_H))
 
-        underTest = createUnderTest()
+        underTest = createUnderTest(handler)
         underTest.init()
         foldListener = captureDeviceStateCallback()
+        displayListener = captureDisplayListener()
         selector.onSettingChanged(FoldAnimationStyle.DUO)
     }
 
@@ -118,12 +153,13 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
         verify(innerController)
             .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.MAX_BLUR_PX))
-        verify(innerController, never()).setBackgroundBlurRadius(any())
+        verify(innerController, never()).setBlurRegions(any())
         assertThat(runtime.blurAvailable).isTrue()
+        assertThat(runtime.innerBlurFrontPx).isEqualTo(INNER_W)
         progressProvider.onTransitionStarted()
         progressProvider.onTransitionProgress(0.9f)
         processAll()
-        verify(innerController).setBackgroundBlurRadius(0)
+        assertThat(lastRegions(innerController)).isEqualTo(innerRows(0.9f))
         verify(innerController).isTouchBlocked = false
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
 
@@ -132,6 +168,9 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         verify(innerController, atLeastOnce()).ensureOverlayRemoved()
         assertThat(runtime.overlayAttached).isFalse()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        val share = DuoBlurCurve.innerRemaining(0.9f)
+        assertThat(runtime.innerBlurFrontPx)
+            .isEqualTo(DuoBlurCurve.frontPx(INNER_W, share, Anchor.LEFT))
     }
 
     @Test
@@ -183,7 +222,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     @Test
     fun blurRefused_marksBlurUnavailable_thenRetriesOnProgress() {
         whenever(innerController.isBlurAvailable()).thenReturn(false)
-        whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(false)
+        whenever(innerController.setBlurRegions(any())).thenReturn(false)
         reportFolded(true)
         reportFolded(false)
 
@@ -193,11 +232,11 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(runtime.blurAvailable).isFalse()
         verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), any())
 
-        whenever(innerController.setBackgroundBlurRadius(any())).thenReturn(true)
+        whenever(innerController.setBlurRegions(any())).thenReturn(true)
         progressProvider.onTransitionProgress(0.5f)
         processAll()
 
-        verify(innerController).setBackgroundBlurRadius(DuoBlurCurve.radiusFor(0.5f))
+        assertThat(lastRegions(innerController)).isEqualTo(innerRows(0.5f))
         assertThat(runtime.blurAvailable).isTrue()
     }
 
@@ -280,8 +319,12 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
         processAll()
 
-        verify(coverController).setBackgroundBlurRadius(0)
+        // Fully blurred from the right edge at the start, swept clear left to right at the end.
+        val regions = allRegions(coverController)
+        assertThat(regions.first()).isEqualTo(coverRevealRows(1f))
+        assertThat(regions.last()).isEmpty()
         verify(coverController, atLeastOnce()).ensureOverlayRemoved()
+        assertThat(runtime.coverBlurFrontPx).isEqualTo(COVER_W)
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
     }
 
@@ -296,7 +339,7 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
         processAll()
 
-        verify(coverController).setBackgroundBlurRadius(0)
+        assertThat(lastRegions(coverController)).isEmpty()
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
     }
 
@@ -358,9 +401,8 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         progressProvider.onTransitionStarted()
         processAll()
 
-        verify(innerController)
-            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.radiusFor(1f)))
-        verify(innerController, never()).setBackgroundBlurRadius(DuoBlurCurve.MAX_BLUR_PX)
+        verify(innerController).addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(0))
+        verify(innerController, never()).setBlurRegions(any())
     }
 
     @Test
@@ -440,11 +482,155 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         assertThat(runtime.overlayAttached).isFalse()
     }
 
-    private fun createUnderTest() =
+    @Test
+    fun sleepDuringOpen_releasesFrameAndBothOverlays() {
+        foldWithCoverOn()
+        hinge.report(30f)
+        processAll()
+        displayListener.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+        frame.completeShow(true)
+        reportFolded(false)
+        selector.onGatedTransitionStarted(progressProvider)
+        underTest.onScreenTurningOn {}
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.UNFOLDING)
+
+        isAsleep.value = true
+        processAll()
+
+        assertThat(frame.releases).isEqualTo(1)
+        verify(innerController, atLeastOnce()).ensureOverlayRemoved()
+        verify(innerController, atLeastOnce()).isTouchBlocked = false
+        verify(coverController, atLeastOnce()).ensureOverlayRemoved()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.overlayAttached).isFalse()
+        assertThat(runtime.dualPanel).isFalse()
+        assertThat(runtime.lastCancelReason).isEqualTo("ASLEEP")
+        assertThat(hinge.isListening).isFalse()
+    }
+
+    @Test
+    fun holdingSlightlyOpen_keepsTheCoverOverlayAttached() {
+        foldWithCoverOn()
+        hinge.report(10f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+
+        testableLooper.moveTimeForward(6_000)
+        processAll()
+
+        verify(coverController, never()).ensureOverlayRemoved()
+        assertThat(frame.releases).isEqualTo(0)
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+        assertThat(runtime.overlayAttached).isTrue()
+        assertThat(runtime.cancellations).isEqualTo(0)
+    }
+
+    @Test
+    fun closingFold_doesNotStartAFakeCoverOpening() {
+        hinge.currentAngle = 20f
+        reportFolded(false)
+        underTest.onScreenTurningOn {} // the inner screen
+        processAll()
+        reportFolded(true)
+
+        underTest.onScreenTurningOn {} // the cover screen, while the hinge is still closing
+        processAll()
+        hinge.report(15f)
+        hinge.report(5f)
+        underTest.onCoverScreenOn()
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+        hinge.report(4f)
+        processAll()
+
+        assertThat(frame.captures).isEmpty()
+        verify(coverController, times(1)).addOverlay(any(), anyOrNull(), any())
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        hinge.report(0f)
+        hinge.report(2f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+    }
+
+    @Test
+    fun aodScreenOn_doesNotStartHingeListening() {
+        isAsleep.value = true
+        processAll()
+        reportFolded(true)
+
+        underTest.onScreenTurningOn {} // AOD turns the cover on while asleep
+        processAll()
+
+        assertThat(hinge.isListening).isFalse()
+        isAsleep.value = false
+        processAll()
+        assertThat(hinge.isListening).isTrue()
+    }
+
+    @Test
+    fun animatorScaleZero_midOpen_cancelsTheCoverOpening() {
+        foldWithCoverOn()
+        hinge.report(30f)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_OPENING)
+
+        // TestableSettingsProvider clears this after the test.
+        Settings.Global.putString(
+            mContext.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            "0",
+        )
+        animationStatus.onAnimationStatusChanged(false)
+        processAll()
+
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(frame.releases).isEqualTo(1)
+        assertThat(hinge.isListening).isFalse()
+    }
+
+    /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */
+    private fun foldWithCoverOn() {
+        reportFolded(true)
+        underTest.onScreenTurningOn {}
+        processAll()
+        underTest.onCoverScreenOn()
+        animatorTestRule.advanceTimeBy(DuoFoldOverlayAnimation.COVER_REVEAL_MS)
+        processAll()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        // The hinge is closed; that reading arms the next open.
+        hinge.report(0f)
+        processAll()
+        clearInvocations(coverController)
+    }
+
+    private fun innerRows(progress: Float): List<List<Float>> {
+        val share = DuoBlurCurve.innerRemaining(progress)
+        return DuoBlurCurve.rowsFor(INNER_W, INNER_H, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.LEFT)
+            .map { it.toList() }
+    }
+
+    private fun coverRevealRows(share: Float): List<List<Float>> =
+        DuoBlurCurve.rowsFor(COVER_W, COVER_H, share, DuoBlurCurve.MAX_BLUR_PX, Anchor.RIGHT)
+            .map { it.toList() }
+
+    private fun allRegions(
+        controller: FullscreenLightRevealAnimationController
+    ): List<List<List<Float>>> {
+        val captor = argumentCaptor<List<FloatArray>>()
+        verify(controller, atLeastOnce()).setBlurRegions(captor.capture())
+        return captor.allValues.map { regions -> regions.map { it.toList() } }
+    }
+
+    private fun lastRegions(controller: FullscreenLightRevealAnimationController) =
+        allRegions(controller).last()
+
+    private fun createUnderTest(handler: Handler) =
         DuoFoldOverlayAnimation(
             mContext,
             mContext.contentResolver,
-            Handler(testableLooper.looper),
+            handler,
             progressProvider,
             deviceStateManager,
             threadFactory,
@@ -453,8 +639,27 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
             runtime,
             powerInteractor,
             scope,
-            logcatLogBuffer("YrrpFoldAnimationLog"),
+            logBuffer,
+            DuoCoverOpening(
+                handler,
+                mContext.contentResolver,
+                selector,
+                runtime,
+                powerInteractor,
+                hinge,
+                frame,
+                displayManager,
+                logBuffer,
+            ),
+            displayManager,
+            animationStatus,
         )
+
+    private fun captureDisplayListener(): DisplayManager.DisplayListener {
+        val captor = argumentCaptor<DisplayManager.DisplayListener>()
+        verify(displayManager).registerDisplayListener(captor.capture(), any<Handler>(), any())
+        return captor.firstValue
+    }
 
     private fun captureDeviceStateCallback(): DeviceStateManager.DeviceStateCallback {
         val captor = ArgumentCaptor.forClass(DeviceStateManager.DeviceStateCallback::class.java)
@@ -466,6 +671,9 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
         foldListener.onDeviceStateChanged(if (folded) foldedState else unfoldedState)
         processAll()
     }
+
+    private fun display(id: Int, width: Int, height: Int) =
+        fakeInternalDisplay(displayGlobal, id, width, height)
 
     private fun processAll() = testableLooper.processAllMessages()
 }

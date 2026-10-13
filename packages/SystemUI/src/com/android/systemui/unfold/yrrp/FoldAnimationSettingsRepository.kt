@@ -61,6 +61,7 @@ constructor(
             .stateIn(backgroundScope, SharingStarted.Eagerly, STOCK_VALUE)
 
     companion object {
+        // Also read by system_server: FoldSettingProvider.YRRP_FOLD_ANIMATION (Duo style = 2).
         const val SETTING_KEY = "lineage_fold_animation"
         private const val TAG = "FoldAnimationSettings"
         private const val MAX_READ_RETRIES = 3L
