@@ -34,7 +34,9 @@ import com.android.systemui.privacy.PrivacyItemController
 import com.android.systemui.privacy.PrivacyType
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.featurepods.av.domain.interactor.AvControlsChipInteractor
+import com.android.systemui.statusbar.pipeline.battery.domain.interactor.batteryInteractor
 import com.android.systemui.statusbar.policy.BatteryController
+import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.argThat
 import com.android.systemui.util.time.FakeSystemClock
@@ -97,6 +99,7 @@ class SystemEventCoordinatorTest(flags: FlagsParameterization) : SysuiTestCase()
             SystemEventCoordinator(
                     fakeSystemClock,
                     batteryController,
+                    testKosmos().batteryInteractor,
                     privacyController,
                     avControlsChipInteractor,
                     context,

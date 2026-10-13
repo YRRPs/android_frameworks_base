@@ -47,6 +47,10 @@ class FakeWifiRepository : WifiRepository {
     override val wifiToggleState: StateFlow<WifiToggleState> =
         MutableStateFlow(WifiToggleState.Normal)
 
+    override fun disableWifi() {
+        // No op
+    }
+
     override fun enableWifi() {
         // No op
     }
