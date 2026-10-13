@@ -86,20 +86,50 @@ class FoldLightRevealOverlayAnimationTest : SysuiTestCase() {
         whenever(mockFullScreenController.scrimView).thenReturn(mockScrimView)
         whenever(mockJankMonitor.begin(any(), eq(CUJ_FOLD_ANIM))).thenReturn(true)
 
-        foldLightRevealAnimation =
-            FoldLightRevealOverlayAnimation(
-                kosmos.testDispatcher,
-                fakeDeviceStateRepository,
-                powerInteractor,
-                testScope.backgroundScope,
-                fakeAnimationStatusRepository,
-                mockControllerFactory,
-                mockFoldLockSettingAvailabilityProvider,
-                mockJankMonitor,
-                FoldAnimationStyleSelector().apply { onSettingChanged(FoldAnimationStyle.PIXEL) },
-            )
+        foldLightRevealAnimation = createAnimation(aospFoldRevealEnabled = true)
         foldLightRevealAnimation.init()
     }
+
+    private fun createAnimation(aospFoldRevealEnabled: Boolean) =
+        FoldLightRevealOverlayAnimation(
+            kosmos.testDispatcher,
+            fakeDeviceStateRepository,
+            powerInteractor,
+            testScope.backgroundScope,
+            fakeAnimationStatusRepository,
+            mockControllerFactory,
+            mockFoldLockSettingAvailabilityProvider,
+            mockJankMonitor,
+            FoldAnimationStyleSelector().apply { onSettingChanged(FoldAnimationStyle.PIXEL) },
+            aospFoldRevealEnabled,
+        )
+
+    @Test
+    fun yrrpRevealDisabled_pixelFoldToScreenOn_doesNotPlayOrAttach() =
+        testScope.runTest {
+            clearInvocations(mockControllerFactory, mockFullScreenController)
+            foldLightRevealAnimation = createAnimation(aospFoldRevealEnabled = false)
+            foldLightRevealAnimation.init()
+
+            foldDeviceToScreenOff()
+            turnScreenOn()
+            advanceTime(ANIMATION_DURATION)
+
+            verify(mockControllerFactory, never()).create(any(), any(), any())
+            verifyFoldAnimationDidNotPlay()
+        }
+
+    @Test
+    fun yrrpRevealDisabled_screenTurningOn_runsReadyAtOnce() =
+        testScope.runTest {
+            foldLightRevealAnimation = createAnimation(aospFoldRevealEnabled = false)
+            foldLightRevealAnimation.init()
+            foldDeviceToScreenOff()
+
+            foldLightRevealAnimation.onScreenTurningOn(onOverlayReady)
+
+            verify(onOverlayReady).run()
+        }
 
     @Test
     fun foldToScreenOn_playFoldAnimation() =

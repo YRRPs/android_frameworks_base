@@ -38,7 +38,8 @@ import kotlinx.coroutines.delay
 
 /**
  * Feeds the per-user setting into [FoldAnimationStyleSelector], logs latch transitions, releases a
- * stuck latch on sleep or after [LATCH_TIMEOUT_MS], and dumps every gate. Dump:
+ * stuck latch on sleep or after [LATCH_TIMEOUT_MS], keeps the fold-lock setting at Always while
+ * Duo is on ([DuoFoldLockEnforcer]), and dumps every gate. Dump:
  * `dumpsys activity service com.android.systemui/.SystemUIService YrrpFoldAnimation
  * YrrpFoldAnimationLog`.
  */
@@ -54,6 +55,7 @@ class YrrpFoldAnimationStartable(
     private val powerInteractor: PowerInteractor,
     private val backgroundScope: CoroutineScope,
     private val animationsEnabled: () -> Boolean,
+    foldLockSettings: FoldLockSettings,
 ) : CoreStartable, Dumpable {
 
     @Inject
@@ -68,6 +70,7 @@ class YrrpFoldAnimationStartable(
         powerInteractor: PowerInteractor,
         @Background backgroundScope: CoroutineScope,
         contentResolver: ContentResolver,
+        foldLockSettings: FoldLockSettingsRepository,
     ) : this(
         repository,
         selector,
@@ -79,7 +82,10 @@ class YrrpFoldAnimationStartable(
         powerInteractor,
         backgroundScope,
         { contentResolver.areAnimationsEnabled() },
+        foldLockSettings,
     )
+
+    private val foldLock = DuoFoldLockEnforcer(foldLockSettings, ::log)
 
     private val timeoutLock = Any()
     @GuardedBy("timeoutLock") private var timeoutJob: Job? = null
@@ -121,6 +127,7 @@ class YrrpFoldAnimationStartable(
                 log("setting raw=$raw style=$style")
             }
         }
+        foldLock.start(backgroundScope)
     }
 
     /** A lost finish must not pin the style or swallow the next start: release after a delay. */
@@ -177,6 +184,8 @@ class YrrpFoldAnimationStartable(
         pw.println("completions=${selector.completions}")
         pw.println("cancellations=${runtimeState.cancellations}")
         pw.println("lastCancelReason=${runtimeState.lastCancelReason}")
+        pw.println("foldLockValue=${foldLock.foldLockValue}")
+        pw.println("foldLockForced=${foldLock.foldLockForced}")
     }
 
     companion object {
