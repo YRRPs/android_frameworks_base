@@ -73,7 +73,8 @@ constructor(
 
     /**
      * Captures [fromDisplayId]. Replaces and recycles the previous shot and cancels an in-flight
-     * [show]. Returns false if capture failed; the open then runs unfrozen.
+     * [show]. Returns false if capture failed; with no picture the next [show] reports false,
+     * so the open is cancelled when the cover's own display appears.
      */
     open fun capture(fromDisplayId: Int): Boolean {
         ensureOnBg()

@@ -113,6 +113,7 @@ class DuoCoverOpeningTest : SysuiTestCase() {
 
     @Test
     fun closingReadingsAfterAFold_neverStartAnOpen() {
+        hinge.currentAngle = 20f
         startFolded()
 
         listOf(15f, 10f, 5f).forEach { hinge.report(it) }
@@ -283,23 +284,67 @@ class DuoCoverOpeningTest : SysuiTestCase() {
         assertThat(frame.releases).isEqualTo(1)
         assertThat(underTest.isActive).isFalse()
         assertThat(runtime.dualPanel).isFalse()
+        assertThat(dumpedLog()).contains("cover opening cancelled reason=FOLDED")
     }
 
     @Test
-    fun foldFromTheInnerScreen_waitsForTheCoversOwnScreenOn() {
+    fun foldFromTheInnerScreen_closingReadingsNeverCapture() {
         startUnfolded()
+        hinge.currentAngle = 20f
 
         underTest.onFoldChanged(true)
-        assertThat(hinge.isListening).isFalse()
-        hinge.report(4f)
-
-        underTest.onScreenChanged(true)
-        assertThat(hinge.isListening).isTrue()
+        processAll()
+        listOf(15f, 10f, 5f).forEach { hinge.report(it) }
+        underTest.onScreenChanged(true) // the cover's own screen-on
         hinge.report(4f)
         processAll()
+
+        assertThat(frame.captures).isEmpty()
         assertThat(underTest.isActive).isFalse()
         openTo(2f)
         assertThat(underTest.isActive).isTrue()
+    }
+
+    @Test
+    fun restartWithTheHingeClosed_opensOnTheFirstMove() {
+        hinge.currentAngle = 0f
+
+        startFolded()
+        hinge.report(30f)
+        processAll()
+
+        assertThat(underTest.isActive).isTrue()
+        assertThat(frame.captures).containsExactly(Display.DEFAULT_DISPLAY)
+        assertThat(dumpedLog()).contains("cover hinge first angle=0.0 state=DISARMED")
+    }
+
+    @Test
+    fun listeningStartsPartlyOpen_doesNotCapture() {
+        hinge.currentAngle = 10f
+
+        startFolded()
+        hinge.report(30f)
+        processAll()
+
+        assertThat(underTest.isActive).isFalse()
+        assertThat(frame.captures).isEmpty()
+        assertThat(dumpedLog()).contains("cover hinge first angle=10.0 state=DISARMED")
+    }
+
+    @Test
+    fun missingPicture_cancelsCleanlyWhenTheCoverDisplayAppears() {
+        frame.captureResult = false
+        val displays = startFolded()
+        openTo(30f)
+
+        displays.onDisplayAdded(COVER_OWN_ID)
+        processAll()
+
+        assertThat(underTest.isActive).isFalse()
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+        assertThat(runtime.overlayAttached).isFalse()
+        assertThat(runtime.dualPanel).isFalse()
+        assertThat(dumpedLog()).contains("cover frame failed")
     }
 
     @Test

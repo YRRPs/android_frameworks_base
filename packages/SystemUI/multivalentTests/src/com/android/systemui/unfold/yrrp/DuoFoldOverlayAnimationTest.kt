@@ -523,11 +523,11 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
     @Test
     fun closingFold_doesNotStartAFakeCoverOpening() {
+        hinge.currentAngle = 20f
         reportFolded(false)
         underTest.onScreenTurningOn {} // the inner screen
         processAll()
         reportFolded(true)
-        assertThat(hinge.isListening).isFalse()
 
         underTest.onScreenTurningOn {} // the cover screen, while the hinge is still closing
         processAll()

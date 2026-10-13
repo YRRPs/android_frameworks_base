@@ -87,7 +87,6 @@ constructor(
     private lateinit var inner: FullscreenLightRevealAnimationController
     private lateinit var cover: FullscreenLightRevealAnimationController
     private var panels = DuoPanels.NONE
-    private var foldKnown = false
     private var isFolded = false
     private var pendingUnfold = false
     private var pendingCoverReveal = false
@@ -154,7 +153,7 @@ constructor(
             coverReveal && isDuo() -> startCoverReveal(onOverlayReady)
             else -> {
                 // A cover opening started under Duo does not carry into another style's unfold.
-                if (unfold) coverOpening.cancel("STYLE")
+                if (unfold) coverOpening.cancel("NOT_DUO")
                 onOverlayReady.run()
             }
         }
@@ -354,9 +353,7 @@ constructor(
         DeviceStateManager.FoldStateListener(context, Consumer { onFoldChanged(it) })
 
     private fun onFoldChanged(folded: Boolean) {
-        // The first report goes through: the cover opening needs the initial fold state.
-        if (foldKnown && folded == isFolded) return
-        foldKnown = true
+        if (folded == isFolded) return
         if (folded && runtimeState.phase == FoldAnimationPhase.UNFOLDING) {
             cancel("FOLDED")
         } else if (!folded && runtimeState.phase == FoldAnimationPhase.COVER_REVEAL) {

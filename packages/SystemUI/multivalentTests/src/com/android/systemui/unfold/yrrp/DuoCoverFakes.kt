@@ -39,9 +39,13 @@ object DuoTestPanels {
     val PANELS = DuoPanels(COVER_W, COVER_H, INNER_W, INNER_H)
 }
 
-/** A hinge source that hands angles to the test instead of a sensor; bg-only like the real one. */
+/**
+ * A hinge source that hands angles to the test instead of a sensor; bg-only like the real one.
+ * Like the sensor on activation, [start] posts [currentAngle] to the new callback.
+ */
 class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock(), handler) {
     var startResult = true
+    var currentAngle = 0f
     var starts = 0
     private var onAngle: ((Float) -> Unit)? = null
 
@@ -52,6 +56,9 @@ class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock
         checkOnLooper(handler)
         starts++
         this.onAngle = if (startResult) onAngle else null
+        if (startResult) {
+            handler.post { if (this.onAngle === onAngle) onAngle(currentAngle) }
+        }
         return startResult
     }
 
@@ -61,6 +68,7 @@ class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock
     }
 
     fun report(angle: Float) {
+        currentAngle = angle
         onAngle?.invoke(angle)
     }
 }
@@ -68,7 +76,8 @@ class FakeHingeSource(private val handler: Handler) : CoverHingeAngleSource(mock
 /**
  * A cover frame with the real contract: capture, show and release each start a new generation;
  * [show] keeps its callback until [completeShow], which reports only for the current request.
- * Regions apply only once a show has succeeded.
+ * Regions apply only once a show has succeeded. With [captureResult] false there is no picture,
+ * and [show] reports false inline, as the real class does.
  */
 class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     DuoCoverFrame(mock(), Optional.empty(), handler, logBuffer) {
@@ -76,6 +85,8 @@ class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     val shows = mutableListOf<Triple<Int, Int, Int>>()
     val regions = mutableListOf<List<FloatArray>>()
     var releases = 0
+    var captureResult = true
+    private var holdsPicture = false
     private var generation = 0
     private var pending: Pair<Int, (Boolean) -> Unit>? = null
     private var shownGeneration = -1
@@ -84,7 +95,8 @@ class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
         checkOnLooper(handler)
         generation++
         captures += fromDisplayId
-        return true
+        holdsPicture = captureResult
+        return captureResult
     }
 
     override fun show(
@@ -96,6 +108,10 @@ class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
         checkOnLooper(handler)
         generation++
         shows += Triple(targetDisplayId, widthPx, heightPx)
+        if (!holdsPicture) {
+            onShown(false)
+            return
+        }
         pending = generation to onShown
     }
 
@@ -118,6 +134,7 @@ class FakeCoverFrame(private val handler: Handler, logBuffer: LogBuffer) :
     override fun release() {
         checkOnLooper(handler)
         generation++
+        holdsPicture = false
         releases++
     }
 }

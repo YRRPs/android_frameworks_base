@@ -65,8 +65,10 @@ constructor(
     private var panels = DuoPanels.NONE
     private val hingeProgress = CoverHingeProgress(DuoBlurCurve.OPEN_ANGLE_DEGREES)
     private val sequence = DuoOpenSequence()
-    private var isFolded: Boolean? = null
+    private var isFolded = false
     private var isScreenOn = false
+    // Logs the first reading after each listening start: arming decides on it.
+    private var awaitingFirstAngle = false
     private var lastCoverProgress = 0f
     // The cover overlay was dropped for the inner unfold; the cover blur waits for the frame.
     private var overlayHandedOff = false
@@ -86,15 +88,11 @@ constructor(
         displayManager.registerDisplayListener(CoverDisplayListener(), bgHandler, events)
     }
 
-    /** Every fold report, the first one included. */
+    /** A fold ends any open and requires a closed reading before the next one. */
     fun onFoldChanged(folded: Boolean) {
-        if (folded && isFolded == false) {
-            // The screen that was on is the inner one; the cover's own screen-on sets this again.
-            isScreenOn = false
-        }
         isFolded = folded
         if (folded) {
-            if (isActive) perform(sequence.cancel())
+            cancel("FOLDED")
             sequence.disarm()
         }
         updateListening()
@@ -134,17 +132,22 @@ constructor(
 
     /** Listens while folded, screen on and Duo, and while an open runs past the fold change. */
     private fun updateListening() {
-        val wanted = hingeProgress.shouldListen(isFolded == true, isScreenOn, isDuo())
+        val wanted = hingeProgress.shouldListen(isFolded, isScreenOn, isDuo())
         if (wanted && !coverHinge.isListening) {
             // The first reading after a restart may come from a hinge that is still closing.
             sequence.disarm()
-            if (!coverHinge.start(::onCoverAngle)) log("cover hinge unavailable")
+            awaitingFirstAngle = coverHinge.start(::onCoverAngle)
+            if (!awaitingFirstAngle) log("cover hinge unavailable")
         } else if (!wanted && coverHinge.isListening && !isActive) {
             coverHinge.stop()
         }
     }
 
     private fun onCoverAngle(angleDegrees: Float) {
+        if (awaitingFirstAngle) {
+            awaitingFirstAngle = false
+            log("cover hinge first angle=$angleDegrees state=${sequence.state}")
+        }
         // The fold's own cover reveal owns the cover overlay; only a closed reading may arm.
         val revealing = runtimeState.phase == FoldAnimationPhase.COVER_REVEAL
         if (revealing && sequence.state != State.DISARMED) return
