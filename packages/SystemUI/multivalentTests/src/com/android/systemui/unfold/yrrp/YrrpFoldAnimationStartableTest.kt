@@ -59,6 +59,7 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
         }
 
     private var hingeSensor = true
+    private var styleChanges = 0
     private val foldLockState =
         MutableStateFlow(FoldLockState(userId = 0, styleRaw = 0, value = null))
     private val foldLockWrites = mutableListOf<Int>()
@@ -188,6 +189,37 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
     }
 
     @Test
+    fun dump_includesDualPanelAndBlurFronts() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        runtime.dualPanel = true
+        runtime.coverBlurFrontPx = 300
+        runtime.innerBlurFrontPx = 1200
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+
+        val out = StringWriter()
+        underTest.dump(PrintWriter(out), emptyArray())
+        assertThat(out.toString()).contains("dualPanel=true")
+        assertThat(out.toString()).contains("coverBlurFrontPx=300")
+        assertThat(out.toString()).contains("innerBlurFrontPx=1200")
+    }
+
+    @Test
+    fun settingChange_notifiesTheDuoAnimation() = runTest {
+        whenever(repository.setting).thenReturn(raw)
+        val underTest = create(this)
+        underTest.start()
+        runCurrent()
+        val before = styleChanges
+
+        raw.value = 2
+        runCurrent()
+
+        assertThat(styleChanges).isEqualTo(before + 1)
+    }
+
+    @Test
     fun dump_duoWithAnimationsOn_isEligible() = runTest {
         whenever(repository.setting).thenReturn(raw)
         raw.value = 2
@@ -295,5 +327,6 @@ class YrrpFoldAnimationStartableTest : SysuiTestCase() {
             backgroundScope = scope.backgroundScope,
             animationsEnabled = { animationsEnabled },
             foldLockSettings = foldLockSettings,
+            onStyleChanged = { styleChanges++ },
         )
 }

@@ -180,6 +180,8 @@ interface SysUIUnfoldComponent {
 
     fun getFullScreenLightRevealAnimations(): Set<FullscreenLightRevealAnimation>
 
+    fun getDuoFoldOverlayAnimation(): DuoFoldOverlayAnimation
+
     fun getUnfoldTransitionWallpaperController(): UnfoldTransitionWallpaperController
 
     fun getUnfoldHapticsPlayer(): UnfoldHapticsPlayer
