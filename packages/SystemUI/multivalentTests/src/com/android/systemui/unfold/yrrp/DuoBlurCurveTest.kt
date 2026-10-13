@@ -27,23 +27,45 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class DuoBlurCurveTest : SysuiTestCase() {
     @Test
-    fun fullBlurAtStart_noneFromClearPoint() {
-        assertThat(DuoBlurCurve.radiusFor(0f)).isEqualTo(120)
-        assertThat(DuoBlurCurve.radiusFor(0.85f)).isEqualTo(0)
-        assertThat(DuoBlurCurve.radiusFor(1f)).isEqualTo(0)
+    fun coverCoverage_startsAtZero_reachesFullAtOpen() {
+        assertThat(DuoBlurCurve.coverCoverage(0f)).isEqualTo(0f)
+        assertThat(DuoBlurCurve.coverCoverage(1f)).isEqualTo(1f)
     }
 
     @Test
-    fun deceleratesBetween() {
-        // t = 0.5 / 0.85; decelerate 1 - (1 - t)^2; radius = 120 * (1 - that)
-        val t = 0.5f / 0.85f
-        val expected = Math.round(120 * (1 - t) * (1 - t))
-        assertThat(DuoBlurCurve.radiusFor(0.5f)).isEqualTo(expected)
+    fun coverCoverage_easesOut() {
+        // 1 - (1 - 0.5)^2 = 0.75
+        assertThat(DuoBlurCurve.coverCoverage(0.5f)).isWithin(1e-6f).of(0.75f)
     }
 
     @Test
-    fun clampsOutOfRange() {
-        assertThat(DuoBlurCurve.radiusFor(-1f)).isEqualTo(120)
-        assertThat(DuoBlurCurve.radiusFor(2f)).isEqualTo(0)
+    fun coverCoverage_clamps() {
+        assertThat(DuoBlurCurve.coverCoverage(-1f)).isEqualTo(0f)
+        assertThat(DuoBlurCurve.coverCoverage(2f)).isEqualTo(1f)
+    }
+
+    @Test
+    fun innerRemaining_fullAtStart_clearAtClearPoint() {
+        assertThat(DuoBlurCurve.innerRemaining(0f)).isEqualTo(1f)
+        assertThat(DuoBlurCurve.innerRemaining(0.95f)).isEqualTo(0f)
+        assertThat(DuoBlurCurve.innerRemaining(1f)).isEqualTo(0f)
+    }
+
+    @Test
+    fun innerRemaining_easesIn_mostlyBlurredAt60Degrees() {
+        // 60 degrees of 165 is p = 0.3636; t = p / 0.95; remaining = 1 - t^2, about 0.853
+        val p = 60f / 165f
+        val t = p / 0.95f
+        assertThat(DuoBlurCurve.innerRemaining(p)).isWithin(1e-5f).of(1f - t * t)
+        assertThat(DuoBlurCurve.innerRemaining(p)).isGreaterThan(0.85f)
+    }
+
+    @Test
+    fun constantsMatchTheIssue() {
+        assertThat(DuoBlurCurve.MAX_BLUR_PX).isEqualTo(220)
+        assertThat(DuoBlurCurve.BLUR_CLEAR_PROGRESS).isEqualTo(0.95f)
+        assertThat(DuoBlurCurve.EDGE_WIDTH_FRACTION).isEqualTo(0.6f)
+        assertThat(DuoBlurCurve.TOUCH_UNBLOCK_PROGRESS).isEqualTo(0.8f)
+        assertThat(DuoBlurCurve.OPEN_ANGLE_DEGREES).isEqualTo(165f)
     }
 }
