@@ -32,15 +32,15 @@ class CoverHingeProgress(private val openAngleDegrees: Float) {
     fun shouldListen(folded: Boolean, screenOn: Boolean, duo: Boolean): Boolean =
         folded && screenOn && duo
 
-    /** Maps a hinge angle linearly onto 0..1, reaching 1 at the open angle. */
+    /** Maps a hinge angle linearly onto 0..1, reaching 1 at the open angle; NaN reads as 0. */
     fun progressFor(angleDegrees: Float): Float =
-        (angleDegrees / openAngleDegrees).coerceIn(0f, 1f)
+        if (angleDegrees.isNaN()) 0f else (angleDegrees / openAngleDegrees).coerceIn(0f, 1f)
 
     /** Whether the hinge has opened at least 1 degree from closed. */
     fun hasLeftClosed(angleDegrees: Float): Boolean = angleDegrees >= LEFT_CLOSED_DEGREES
 
     private companion object {
-        // xueying's hinge HAL reports whole degrees, so a smaller threshold never fires.
+        // xueying's hinge HAL reports whole degrees, so 1 is the first reading above closed.
         const val LEFT_CLOSED_DEGREES = 1f
     }
 }

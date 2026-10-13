@@ -46,6 +46,11 @@ class CoverHingeProgressTest : SysuiTestCase() {
     }
 
     @Test
+    fun notANumberAngleMapsToClosed() {
+        assertThat(progress.progressFor(Float.NaN)).isEqualTo(0f)
+    }
+
+    @Test
     fun startsOnlyWhenTheHingeLeavesZero() {
         assertThat(progress.hasLeftClosed(0f)).isFalse()
         assertThat(progress.hasLeftClosed(0.4f)).isFalse()
