@@ -49,8 +49,8 @@ public class FoldSettingProvider {
     private static final Set<String> SETTING_VALUES = Set.of(SETTING_VALUE_STAY_AWAKE_ON_FOLD,
             SETTING_VALUE_SELECTIVE_STAY_AWAKE, SETTING_VALUE_SLEEP_ON_FOLD);
     private static final String TAG = "FoldSettingProvider";
-    // Must match SETTING_KEY and the Duo style value in SystemUI's
-    // com.android.systemui.unfold.yrrp.FoldAnimationSettingsRepository.kt.
+    // Must match SystemUI (com.android.systemui.unfold.yrrp): the key is SETTING_KEY in
+    // FoldAnimationSettingsRepository.kt, and 2 is FoldAnimationStyle.DUO in FoldAnimationStyle.kt.
     private static final String YRRP_FOLD_ANIMATION = "lineage_fold_animation";
     private static final int YRRP_FOLD_DUO = 2;
 

@@ -1381,7 +1381,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                     ? null : findLogicalDisplayForLayoutDefaultLocked(fromLayout);
         }
         Slog.i(TAG, "YrrpDualPanel: gate duo=" + (mInteractive ? duo : "unread")
-                + " interactive=" + mInteractive + " started=" + (keepLit != null));
+                + " interactive=" + mInteractive + " started=" + (keepLit != null)
+                + " session=" + mDuoDualPanel.getState());
         return keepLit;
     }
 
