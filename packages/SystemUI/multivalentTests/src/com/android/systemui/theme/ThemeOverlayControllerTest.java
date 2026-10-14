@@ -1335,6 +1335,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
         assertThat(output.toString()).doesNotContain("11111111-1111-4111-8111-111111111111");
         assertThat(output.toString()).doesNotContain("B69CFF");
         assertThat(output.toString()).doesNotContain("75D5C7");
+        assertThat(output.toString()).doesNotContain("ffff0000");
+        assertThat(output.toString()).doesNotContain("WallpaperColors");
     }
 
     @Test

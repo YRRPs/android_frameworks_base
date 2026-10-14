@@ -1210,8 +1210,9 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 + mLastSuccessfulCustomApplyTimestamp);
         pw.println("hasSuccessfulApply="
                 + mHasSuccessfulApply.get(mUserTracker.getUserId()));
-        pw.println("mSystemColors=" + mCurrentColors);
-        pw.println("mMainWallpaperColor=" + Integer.toHexString(mMainWallpaperColor));
+        pw.println("currentUserWallpaperColorsPresent="
+                + (mCurrentColors.get(mUserTracker.getUserId()) != null));
+        pw.println("wallpaperSeedAvailable=" + (mMainWallpaperColor != Color.TRANSPARENT));
         pw.println("mContrast=" + mContrast);
         pw.println("mAccentOverlayPresent=" + (mAccentOverlay != null));
         pw.println("mNeutralOverlayPresent=" + (mNeutralOverlay != null));
