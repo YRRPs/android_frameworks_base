@@ -5778,6 +5778,7 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @EnforcePermission(MANAGE_DISPLAYS)
+        @Override // Binder call
         public void setDuoFoldPhase(int phase) {
             setDuoFoldPhase_enforcePermission();
             final long token = Binder.clearCallingIdentity();

@@ -616,9 +616,12 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
     }
 
     @Test
-    fun foldWithScreenStillOn_startsCoverRevealWithoutScreenOnHandshake() {
+    fun startedFoldWithScreenStillOn_startsCoverRevealWithoutScreenOnHandshake() {
         screenPowerState.value = ScreenPowerState.SCREEN_ON
         reportFolded(false)
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        processAll()
 
         reportFolded(true)
         processAll()
@@ -650,6 +653,52 @@ class DuoFoldOverlayAnimationTest : SysuiTestCase() {
 
         verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
         assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+    }
+
+    @Test
+    fun foldWithoutStartedReport_waitsForTheCoverScreenOnHandshake() {
+        // The inner screen still reports on, but nothing kept the cover lit for this fold.
+        screenPowerState.value = ScreenPowerState.SCREEN_ON
+        reportFolded(false)
+
+        reportFolded(true)
+        processAll()
+
+        verify(coverController, never()).addOverlay(any(), anyOrNull(), any())
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.IDLE)
+
+        underTest.onScreenTurningOn {}
+        processAll()
+
+        verify(coverController)
+            .addOverlay(eq(ALPHA_TRANSPARENT), anyOrNull(), eq(DuoBlurCurve.MAX_BLUR_PX))
+        assertThat(runtime.phase).isEqualTo(FoldAnimationPhase.COVER_REVEAL)
+    }
+
+    @Test
+    fun startedFoldWithoutImmediateReveal_reportsFinished_soTheNextFoldStartsAgain() {
+        reportFolded(false)
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        processAll()
+
+        // The screen is not on, so the reveal waits for a handshake; the started report closes.
+        reportFolded(true)
+        processAll()
+        verify(displayManager).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_FINISHED)
+
+        // Unfold through the inner screen-on, then fold again on the inner screen.
+        reportFolded(false)
+        underTest.onScreenTurningOn {}
+        processAll()
+        progressProvider.onTransitionStarted()
+        progressProvider.onTransitionFinished()
+        processAll()
+        selector.onGatedTransitionStarted(progressProvider)
+        progressProvider.onTransitionStarted()
+        processAll()
+
+        verify(displayManager, times(2)).setDuoFoldPhase(DisplayManager.DUO_FOLD_PHASE_STARTED)
     }
 
     /** Folds, lets the cover reveal finish, and leaves the cover on with the hinge listening. */

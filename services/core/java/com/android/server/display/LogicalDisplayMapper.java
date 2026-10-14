@@ -235,7 +235,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private final DisplayGroupAllocator mDisplayGroupAllocator;
     private final Predicate<DisplayInfo> mIsDisplayAllowedInTopology;
 
-    /** YRRP Duo: the open during which the cover panel stays lit on its own logical display. */
+    /** YRRP Duo: the open or fold during which both panels stay lit. */
     private final DuoDualPanelSession mDuoDualPanel = new DuoDualPanelSession();
 
     /**
@@ -257,7 +257,10 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     /** YRRP Duo: the last gate decision, for dumpsys. */
     private String mDuoLastGate = "NONE";
 
-    /** YRRP Duo: the cover device of the active session, so its logical display is recognised. */
+    /**
+     * YRRP Duo: the device the active session holds lit, so its logical display is recognised:
+     * the cover, or the inner panel once a fold session is handed over.
+     */
     private DisplayDevice mDuoCoverDevice;
 
     LogicalDisplayMapper(@NonNull Context context, FoldSettingProvider foldSettingProvider,
@@ -1761,8 +1764,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             case END_NOW: {
                 mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_TIMEOUT);
                 mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_OVERDUE);
-                // END_NOW only comes from a commit, whose resetLayoutLocked(false) has already
-                // cleared every in-transition mark, ours included.
+                // END_NOW ends a LIT session, whose display is never marked in transition, or
+                // comes from a commit, whose resetLayoutLocked(false) has already cleared every
+                // in-transition mark, ours included.
                 mDuoCoverDevice = null;
                 Slog.i(TAG, "YrrpDualPanel: end reason=" + mDuoDualPanel.getEndReason()
                         + " display=" + coverId);

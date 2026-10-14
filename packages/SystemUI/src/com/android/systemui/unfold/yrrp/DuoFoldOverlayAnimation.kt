@@ -310,7 +310,7 @@ constructor(
         val folding =
             runtimeState.phase == FoldAnimationPhase.FOLDING ||
                 runtimeState.phase == FoldAnimationPhase.COVER_REVEAL
-        if (folding) reportFoldFinished(reason)
+        if (folding || foldPhaseStarted) reportFoldFinished(reason)
         val active = runtimeState.overlayAttached || coverOpening.isActive
         coverOpening.cancel(reason)
         when (runtimeState.phase) {
@@ -392,11 +392,19 @@ constructor(
             // screen's.
             pendingUnfold = true
             pendingCoverReveal = true
-            // system_server kept the cover lit through the fold, so no screen-on follows: the
-            // cover reveal starts now, on the screen that is already on.
-            if (isDuo() && powerInteractor.screenPowerState.value == ScreenPowerState.SCREEN_ON) {
-                pendingCoverReveal = false
-                startCoverReveal(Runnable {})
+            // A fold that reported STARTED had the cover lit alongside, so no screen-on follows:
+            // the cover reveal starts now. The screen state alone says nothing about the cover;
+            // it is still the inner panel's. Any other fold waits for the cover's screen-on.
+            if (foldPhaseStarted) {
+                val screenOn =
+                    powerInteractor.screenPowerState.value == ScreenPowerState.SCREEN_ON
+                if (isDuo() && screenOn) {
+                    pendingCoverReveal = false
+                    startCoverReveal(Runnable {})
+                } else {
+                    // No reveal to wait for: let system_server turn the inner panel off now.
+                    reportFoldFinished("NO_REVEAL")
+                }
             }
         } else {
             pendingCoverReveal = false
