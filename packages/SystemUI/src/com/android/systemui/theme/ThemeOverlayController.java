@@ -82,6 +82,9 @@ import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.keyguard.shared.model.KeyguardState;
 import com.android.systemui.monet.ColorScheme;
+import com.android.systemui.monet.CustomThemeContract;
+import com.android.systemui.monet.CustomThemePalette;
+import com.android.systemui.monet.CustomThemePaletteGenerator;
 import com.android.systemui.monet.DynamicColors;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
@@ -153,6 +156,8 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     protected ColorScheme mColorScheme;
     // If fabricated overlays were already created for the current theme.
     private boolean mNeedsOverlayCreation;
+    // Whether any overlay transaction has completed successfully in this process.
+    private boolean mHasSuccessfulApply;
     // Dominant color extracted from wallpaper, NOT the color used on the overlay
     protected int mMainWallpaperColor = Color.TRANSPARENT;
     // UI contrast as reported by UiModeManager
@@ -358,10 +363,13 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             // There is not preset color applied and the incoming wallpaper color is not applied
             String wallpaperPickerColorSource = jsonObject.optString(OVERLAY_COLOR_SOURCE);
             boolean userChosePresetColor = COLOR_SOURCE_PRESET.equals(wallpaperPickerColorSource);
+            boolean userChoseCustomTheme =
+                    CustomThemeContract.COLOR_SOURCE_CUSTOM_THEME.equals(wallpaperPickerColorSource);
             boolean userChoseLockScreenColor = COLOR_SOURCE_LOCK.equals(wallpaperPickerColorSource);
             boolean preserveLockScreenColor = isDestinationHomeOnly && userChoseLockScreenColor;
 
-            if (!userChosePresetColor && !preserveLockScreenColor && wallpaperColorsNeedUpdate
+            if (!userChosePresetColor && !userChoseCustomTheme && !preserveLockScreenColor
+                    && wallpaperColorsNeedUpdate
                     && !isSeedColorSet(jsonObject, wallpaperColors)) {
                 mSkipSettingChange = true;
                 if (jsonObject.has(OVERLAY_CATEGORY_ACCENT_COLOR) || jsonObject.has(
@@ -656,30 +664,88 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     }
 
     private void reevaluateSystemTheme(boolean forceReload) {
-        final WallpaperColors currentColors = mCurrentColors.get(mUserTracker.getUserId());
-        final int mainColor;
-        if (currentColors == null) {
-            mainColor = Color.TRANSPARENT;
-        } else {
-            mainColor = getNeutralColor(currentColors);
-        }
-
+        int mainColor = getCurrentWallpaperSeed();
         if (mMainWallpaperColor == mainColor && !forceReload) {
             return;
         }
         mMainWallpaperColor = mainColor;
 
-        if (mIsMonetEnabled) {
-            mThemeStyle = fetchThemeStyleFromSetting();
-            createOverlays(mMainWallpaperColor);
-            mNeedsOverlayCreation = true;
-            if (DEBUG) {
-                Log.d(TAG, "fetched overlays. accent: " + mAccentOverlay
-                        + " neutral: " + mNeutralOverlay + " dynamic: " + mDynamicOverlay);
-            }
+        String rawSetting = mSecureSettings.getStringForUser(
+                Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES,
+                mUserTracker.getUserId());
+        JSONObject setting = parseThemeSetting(rawSetting);
+        if (setting == null) {
+            handleInvalidThemeSetting();
+            return;
         }
 
-        updateThemeOverlays();
+        CustomThemeContract.ParseResult customTheme = CustomThemeContract.parse(setting);
+        if (customTheme.getStatus() == CustomThemeContract.Status.VALID) {
+            applyCustomTheme(customTheme.getTheme(), setting);
+            return;
+        }
+        if (customTheme.getStatus() != CustomThemeContract.Status.NOT_CUSTOM) {
+            handleInvalidThemeSetting();
+            return;
+        }
+
+        if (mIsMonetEnabled) {
+            mThemeStyle = fetchThemeStyleFromSetting(setting);
+            createOverlays(mMainWallpaperColor);
+            mNeedsOverlayCreation = true;
+        }
+        updateThemeOverlays(setting, false);
+    }
+
+    private int getCurrentWallpaperSeed() {
+        WallpaperColors currentColors = mCurrentColors.get(mUserTracker.getUserId());
+        return currentColors == null ? Color.TRANSPARENT : getNeutralColor(currentColors);
+    }
+
+    private JSONObject parseThemeSetting(String rawSetting) {
+        if (TextUtils.isEmpty(rawSetting)) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(rawSetting);
+        } catch (JSONException exception) {
+            Log.i(TAG, "Failed to parse THEME_CUSTOMIZATION_OVERLAY_PACKAGES.", exception);
+            return null;
+        }
+    }
+
+    private void applyCustomTheme(
+            CustomThemeContract.ActiveTheme theme, JSONObject setting) {
+        if (!mIsMonetEnabled) {
+            updateThemeOverlays(setting, true);
+            return;
+        }
+        try {
+            mThemeStyle = theme.getStyle();
+            CustomThemePalette palette = CustomThemePaletteGenerator.generate(
+                    theme.getLightSeeds(), theme.getDarkSeeds(), theme.isSeparateDark(),
+                    theme.getStyle(), mContrast);
+            mColorScheme = new ColorScheme(
+                    theme.getLightSeeds().getPrimary(), isNightMode(), mThemeStyle, mContrast);
+            createCustomOverlays(palette);
+            mNeedsOverlayCreation = true;
+            updateThemeOverlays(setting, true);
+        } catch (IllegalArgumentException exception) {
+            Log.w(TAG, "Failed to generate custom theme", exception);
+            handleInvalidThemeSetting();
+        }
+    }
+
+    private void handleInvalidThemeSetting() {
+        if (mHasSuccessfulApply) {
+            return;
+        }
+        mThemeStyle = ThemeStyle.TONAL_SPOT;
+        if (mIsMonetEnabled) {
+            createOverlays(mMainWallpaperColor);
+            mNeedsOverlayCreation = true;
+        }
+        updateThemeOverlays(new JSONObject(), false);
     }
 
     /**
@@ -728,6 +794,61 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         assignColorsToOverlay(mDynamicOverlay, DynamicColors.getFixedColorsMapped(), true);
         // Custom Colors
         assignColorsToOverlay(mDynamicOverlay, DynamicColors.getCustomColorsMapped(), false);
+    }
+
+    private void createCustomOverlays(CustomThemePalette palette) {
+        mAccentOverlay = newFabricatedOverlay("accent");
+        assignColorsToOverlay(
+                mAccentOverlay,
+                palette.getLightAccentColors(),
+                palette.getDarkAccentColors(),
+                false);
+        assignColorsToOverlay(
+                mAccentOverlay,
+                palette.getLightErrorColors(),
+                palette.getDarkErrorColors(),
+                false);
+
+        mNeutralOverlay = newFabricatedOverlay("neutral");
+        assignColorsToOverlay(
+                mNeutralOverlay,
+                palette.getLightNeutralColors(),
+                palette.getDarkNeutralColors(),
+                false);
+
+        mDynamicOverlay = newFabricatedOverlay("dynamic");
+        assignColorsToOverlay(
+                mDynamicOverlay,
+                palette.getLightDynamicColors(),
+                palette.getDarkDynamicColors(),
+                false);
+        assignColorsToOverlay(
+                mDynamicOverlay,
+                palette.getFixedDynamicColors(),
+                palette.getFixedDynamicColors(),
+                true);
+        assignColorsToOverlay(
+                mDynamicOverlay,
+                palette.getLightCustomColors(),
+                palette.getDarkCustomColors(),
+                false);
+    }
+
+    private void assignColorsToOverlay(
+            FabricatedOverlay overlay,
+            Map<String, Integer> lightColors,
+            Map<String, Integer> darkColors,
+            boolean isFixed) {
+        lightColors.forEach((name, color) -> {
+            String prefix = "android:color/system_" + name;
+            if (isFixed) {
+                overlay.setResourceValue(prefix, TYPE_INT_COLOR_ARGB8, color, null);
+                return;
+            }
+            overlay.setResourceValue(prefix + "_light", TYPE_INT_COLOR_ARGB8, color, null);
+            overlay.setResourceValue(
+                    prefix + "_dark", TYPE_INT_COLOR_ARGB8, darkColors.get(name), null);
+        });
     }
 
     private void assignColorsToOverlay(FabricatedOverlay overlay,
@@ -791,31 +912,25 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     }
 
     @SuppressWarnings("StringCaseLocaleUsage") // Package name is not localized
-    private void updateThemeOverlays() {
+    private void updateThemeOverlays(JSONObject setting, boolean customTheme) {
         final int currentUser = mUserTracker.getUserId();
-        final String overlayPackageJson = mSecureSettings.getStringForUser(
-                Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES,
-                currentUser);
-        if (DEBUG) Log.d(TAG, "updateThemeOverlays. Setting: " + overlayPackageJson);
         final Map<String, OverlayIdentifier> categoryToPackage = new ArrayMap<>();
-        if (!TextUtils.isEmpty(overlayPackageJson)) {
-            try {
-                JSONObject object = new JSONObject(overlayPackageJson);
-                for (String category : ThemeOverlayApplier.THEME_CATEGORIES) {
-                    if (object.has(category)) {
-                        OverlayIdentifier identifier =
-                                new OverlayIdentifier(object.getString(category));
-                        categoryToPackage.put(category, identifier);
-                    }
+        try {
+            for (String category : ThemeOverlayApplier.THEME_CATEGORIES) {
+                if (setting.has(category)) {
+                    OverlayIdentifier identifier =
+                            new OverlayIdentifier(setting.getString(category));
+                    categoryToPackage.put(category, identifier);
                 }
-            } catch (JSONException e) {
-                Log.i(TAG, "Failed to parse THEME_CUSTOMIZATION_OVERLAY_PACKAGES.", e);
             }
+        } catch (JSONException exception) {
+            Log.i(TAG, "Failed to read theme overlay categories.", exception);
         }
 
         // Let's generate system overlay if the style picker decided to override it.
         OverlayIdentifier systemPalette = categoryToPackage.get(OVERLAY_CATEGORY_SYSTEM_PALETTE);
-        if (mIsMonetEnabled && systemPalette != null && systemPalette.getPackageName() != null) {
+        if (!customTheme && mIsMonetEnabled && systemPalette != null
+                && systemPalette.getPackageName() != null) {
             try {
                 String colorString = systemPalette.getPackageName().toLowerCase();
                 if (!colorString.startsWith("#")) {
@@ -871,6 +986,11 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         }
 
         final Consumer<ThemeOverlayApplier.ApplyResult> onCompleteCallback = result -> {
+            if (result == ThemeOverlayApplier.ApplyResult.SUCCESS) {
+                mHasSuccessfulApply = true;
+            } else {
+                mNeedsOverlayCreation = true;
+            }
             Log.d(TAG, "ThemeHomeDelay: ThemeOverlayController ready with user "
                     + currentUser + " result=" + result);
             mActivityManager.setThemeOverlayReady(currentUser);
@@ -901,7 +1021,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     }
 
     @ThemeStyle.Type
-    private int fetchThemeStyleFromSetting() {
+    private int fetchThemeStyleFromSetting(JSONObject setting) {
         // Allow-list of Style objects that can be created from a setting string, i.e. can be
         // used as a system-wide theme.
         // - Content intentionally excluded, intended for media player, not system-wide
@@ -911,24 +1031,12 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                         ThemeStyle.RAINBOW, ThemeStyle.VIBRANT,
                         ThemeStyle.MONOCHROMATIC));
 
-        @ThemeStyle.Type int style = mThemeStyle;
-        final String overlayPackageJson = mSecureSettings.getStringForUser(
-                Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES,
-                mUserTracker.getUserId());
-        if (!TextUtils.isEmpty(overlayPackageJson)) {
-            try {
-                JSONObject object = new JSONObject(overlayPackageJson);
-                style = ThemeStyle.valueOf(
-                        object.getString(OVERLAY_CATEGORY_THEME_STYLE));
-                if (!validStyles.contains(style)) {
-                    style = ThemeStyle.TONAL_SPOT;
-                }
-            } catch (JSONException | IllegalArgumentException e) {
-                Log.i(TAG, "Failed to parse THEME_CUSTOMIZATION_OVERLAY_PACKAGES.", e);
-                style = ThemeStyle.TONAL_SPOT;
-            }
+        try {
+            int style = ThemeStyle.valueOf(setting.getString(OVERLAY_CATEGORY_THEME_STYLE));
+            return validStyles.contains(style) ? style : ThemeStyle.TONAL_SPOT;
+        } catch (JSONException | IllegalArgumentException exception) {
+            return ThemeStyle.TONAL_SPOT;
         }
-        return style;
     }
 
     protected Pair<Integer, String> getHardwareColorSetting() {
