@@ -85,6 +85,7 @@ import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.monet.CustomThemeContract;
 import com.android.systemui.monet.CustomThemePalette;
 import com.android.systemui.monet.CustomThemePaletteGenerator;
+import com.android.systemui.monet.CustomThemeSeeds;
 import com.android.systemui.monet.DynamicColors;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
@@ -114,6 +115,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -135,6 +137,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private static final boolean DEBUG = false;
 
     private final ThemeOverlayApplier mThemeManager;
+    private final ThemeOverlayControllerLogger mLogger;
     private final UserManager mUserManager;
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final Executor mBgExecutor;
@@ -158,6 +161,18 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private boolean mNeedsOverlayCreation;
     // Whether any overlay transaction has completed successfully in this process.
     private boolean mHasSuccessfulApply;
+    private String mCurrentColorSource = "unset";
+    private CustomThemeContract.Status mCustomValidationStatus =
+            CustomThemeContract.Status.NOT_CUSTOM;
+    private String mCustomRejectionReason;
+    private Integer mCustomContractVersion;
+    private UUID mCustomThemeId;
+    private boolean mCustomSeparateDark;
+    private CustomThemeSeeds mCustomLightSeeds;
+    private CustomThemeSeeds mCustomDarkSeeds;
+    private String mCustomGenerationResult = "not_started";
+    private String mCustomApplyResult = "not_started";
+    private long mLastSuccessfulCustomApplyTimestamp;
     // Dominant color extracted from wallpaper, NOT the color used on the overlay
     protected int mMainWallpaperColor = Color.TRANSPARENT;
     // UI contrast as reported by UiModeManager
@@ -445,6 +460,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             @Main Executor mainExecutor,
             @Background Executor bgExecutor,
             ThemeOverlayApplier themeOverlayApplier,
+            ThemeOverlayControllerLogger logger,
             SecureSettings secureSettings,
             WallpaperManager wallpaperManager,
             UserManager userManager,
@@ -470,6 +486,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         mMainExecutor = mainExecutor;
         mBgHandler = bgHandler;
         mThemeManager = themeOverlayApplier;
+        mLogger = logger;
         mSecureSettings = secureSettings;
         mWallpaperManager = wallpaperManager;
         mUserTracker = userTracker;
@@ -675,19 +692,29 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 mUserTracker.getUserId());
         JSONObject setting = parseThemeSetting(rawSetting);
         if (setting == null) {
+            setColorSource("malformed");
+            mCustomValidationStatus = CustomThemeContract.Status.MALFORMED;
+            mCustomRejectionReason = "json";
+            mLogger.logRejected(mCustomRejectionReason);
             handleInvalidThemeSetting();
             return;
         }
 
+        String source = setting.optString(
+                CustomThemeContract.KEY_COLOR_SOURCE, COLOR_SOURCE_HOME);
+        setColorSource(source);
         CustomThemeContract.ParseResult customTheme = CustomThemeContract.parse(setting);
         if (customTheme.getStatus() == CustomThemeContract.Status.VALID) {
+            recordValidCustomTheme(customTheme.getTheme());
             applyCustomTheme(customTheme.getTheme(), setting);
             return;
         }
         if (customTheme.getStatus() != CustomThemeContract.Status.NOT_CUSTOM) {
+            recordRejectedCustomTheme(setting, customTheme);
             handleInvalidThemeSetting();
             return;
         }
+        clearCustomDecision();
 
         if (mIsMonetEnabled) {
             mThemeStyle = fetchThemeStyleFromSetting(setting);
@@ -714,9 +741,59 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         }
     }
 
+    private void setColorSource(String source) {
+        if (Objects.equals(mCurrentColorSource, source)) {
+            return;
+        }
+        mCurrentColorSource = source;
+        mLogger.logSourceSelected(source);
+    }
+
+    private void recordValidCustomTheme(CustomThemeContract.ActiveTheme theme) {
+        mCustomValidationStatus = CustomThemeContract.Status.VALID;
+        mCustomRejectionReason = null;
+        mCustomContractVersion = CustomThemeContract.VERSION_1;
+        mCustomThemeId = theme.getId();
+        mCustomSeparateDark = theme.isSeparateDark();
+        mCustomLightSeeds = theme.getLightSeeds();
+        mCustomDarkSeeds = theme.getDarkSeeds();
+        mCustomGenerationResult = "not_started";
+        mCustomApplyResult = "not_started";
+        mLogger.logAccepted();
+    }
+
+    private void recordRejectedCustomTheme(
+            JSONObject setting, CustomThemeContract.ParseResult result) {
+        JSONObject custom = setting.optJSONObject(CustomThemeContract.KEY_CUSTOM_THEME);
+        mCustomContractVersion = custom == null
+                ? null : custom.optInt(CustomThemeContract.KEY_VERSION, -1);
+        mCustomValidationStatus = result.getStatus();
+        mCustomRejectionReason = result.getReasonCode();
+        mCustomThemeId = null;
+        mCustomLightSeeds = null;
+        mCustomDarkSeeds = null;
+        mCustomGenerationResult = "not_started";
+        mCustomApplyResult = "not_started";
+        mLogger.logRejected(String.valueOf(mCustomRejectionReason));
+    }
+
+    private void clearCustomDecision() {
+        mCustomValidationStatus = CustomThemeContract.Status.NOT_CUSTOM;
+        mCustomRejectionReason = null;
+        mCustomContractVersion = null;
+        mCustomThemeId = null;
+        mCustomSeparateDark = false;
+        mCustomLightSeeds = null;
+        mCustomDarkSeeds = null;
+        mCustomGenerationResult = "not_started";
+        mCustomApplyResult = "not_started";
+    }
+
     private void applyCustomTheme(
             CustomThemeContract.ActiveTheme theme, JSONObject setting) {
         if (!mIsMonetEnabled) {
+            mCustomGenerationResult = "monet_disabled";
+            mLogger.logGenerationResult(false, "MonetDisabled");
             updateThemeOverlays(setting, true);
             return;
         }
@@ -728,9 +805,13 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             mColorScheme = new ColorScheme(
                     theme.getLightSeeds().getPrimary(), isNightMode(), mThemeStyle, mContrast);
             createCustomOverlays(palette);
+            mCustomGenerationResult = "success";
+            mLogger.logGenerationResult(true, null);
             mNeedsOverlayCreation = true;
             updateThemeOverlays(setting, true);
         } catch (IllegalArgumentException exception) {
+            mCustomGenerationResult = "failed:" + exception.getClass().getSimpleName();
+            mLogger.logGenerationResult(false, exception.getClass().getSimpleName());
             Log.w(TAG, "Failed to generate custom theme", exception);
             handleInvalidThemeSetting();
         }
@@ -738,8 +819,10 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
 
     private void handleInvalidThemeSetting() {
         if (mHasSuccessfulApply) {
+            mLogger.logRetainedCurrent("invalid_contract");
             return;
         }
+        mLogger.logFallback("wallpaper");
         mThemeStyle = ThemeStyle.TONAL_SPOT;
         if (mIsMonetEnabled) {
             createOverlays(mMainWallpaperColor);
@@ -986,8 +1069,13 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         }
 
         final Consumer<ThemeOverlayApplier.ApplyResult> onCompleteCallback = result -> {
+            mCustomApplyResult = result.name();
+            mLogger.logApplyResult(result);
             if (result == ThemeOverlayApplier.ApplyResult.SUCCESS) {
                 mHasSuccessfulApply = true;
+                if (CustomThemeContract.COLOR_SOURCE_CUSTOM_THEME.equals(mCurrentColorSource)) {
+                    mLastSuccessfulCustomApplyTimestamp = System.currentTimeMillis();
+                }
             } else {
                 mNeedsOverlayCreation = true;
             }
@@ -1114,6 +1202,34 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
 
     @Override
     public void dump(@NonNull PrintWriter pw, @NonNull String[] args) {
+        pw.println("colorSource=" + mCurrentColorSource);
+        pw.println("customSchemaVersion=" + mCustomContractVersion);
+        pw.println("customThemeId=" + mCustomThemeId);
+        pw.println("customSeparateDark=" + mCustomSeparateDark);
+        pw.println("customLightPrimary=" + (mCustomLightSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomLightSeeds.getPrimary())));
+        pw.println("customLightSecondary=" + (mCustomLightSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomLightSeeds.getSecondary())));
+        pw.println("customLightTertiary=" + (mCustomLightSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomLightSeeds.getTertiary())));
+        pw.println("customLightNeutral=" + (mCustomLightSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomLightSeeds.getNeutral())));
+        pw.println("customDarkPrimary=" + (mCustomDarkSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomDarkSeeds.getPrimary())));
+        pw.println("customDarkSecondary=" + (mCustomDarkSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomDarkSeeds.getSecondary())));
+        pw.println("customDarkTertiary=" + (mCustomDarkSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomDarkSeeds.getTertiary())));
+        pw.println("customDarkNeutral=" + (mCustomDarkSeeds == null ? "null"
+                : CustomThemeContract.formatRgb(mCustomDarkSeeds.getNeutral())));
+        pw.println("themeStyle=" + ThemeStyle.name(mThemeStyle));
+        pw.println("customValidation=" + mCustomValidationStatus);
+        pw.println("customRejectionReason=" + mCustomRejectionReason);
+        pw.println("customGeneration=" + mCustomGenerationResult);
+        pw.println("customApply=" + mCustomApplyResult);
+        pw.println("lastSuccessfulCustomApplyTimestamp="
+                + mLastSuccessfulCustomApplyTimestamp);
+        pw.println("hasSuccessfulApply=" + mHasSuccessfulApply);
         pw.println("mSystemColors=" + mCurrentColors);
         pw.println("mMainWallpaperColor=" + Integer.toHexString(mMainWallpaperColor));
         pw.println("mContrast=" + mContrast);

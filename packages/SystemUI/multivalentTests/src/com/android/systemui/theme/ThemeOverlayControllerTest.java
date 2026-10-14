@@ -90,6 +90,8 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -124,6 +126,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
     private Handler mBgHandler;
     @Mock
     private ThemeOverlayApplier mThemeOverlayApplier;
+    @Mock
+    private ThemeOverlayControllerLogger mLogger;
     @Mock
     private SecureSettings mSecureSettings;
     @Mock
@@ -194,7 +198,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
 
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, mMainExecutor, mBgExecutor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -936,7 +941,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
 
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, executor, executor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -977,7 +983,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
         Executor executor = MoreExecutors.directExecutor();
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, executor, executor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -1189,6 +1196,16 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
                 .setResourceValue(any(String.class), eq(TYPE_INT_COLOR_ARGB8), anyInt(), eq(null));
         verify(overlays.getValue()[1], times(DynamicColors.getAllNeutralPalette().size() * 2))
                 .setResourceValue(any(String.class), eq(TYPE_INT_COLOR_ARGB8), anyInt(), eq(null));
+        verify(overlays.getValue()[0]).setResourceValue(
+                eq("android:color/system_accent1_500_light"),
+                eq(TYPE_INT_COLOR_ARGB8),
+                anyInt(),
+                eq(null));
+        verify(overlays.getValue()[0]).setResourceValue(
+                eq("android:color/system_accent1_500_dark"),
+                eq(TYPE_INT_COLOR_ARGB8),
+                anyInt(),
+                eq(null));
     }
 
     @Test
@@ -1252,6 +1269,27 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
         assertThat(mThemeOverlayController.mColorScheme.getSeed()).isEqualTo(Color.RED);
     }
 
+    @Test
+    public void dump_invalidCustomTheme_containsDecisionKeysAndReason() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        WallpaperColors colors = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+        mColorsListener.getValue().onColorsChanged(
+                colors, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        assertThat(output.toString()).contains("colorSource=custom_theme");
+        assertThat(output.toString()).contains("customSchemaVersion=2");
+        assertThat(output.toString()).contains("customValidation=UNSUPPORTED_VERSION");
+        assertThat(output.toString()).contains("customRejectionReason=version");
+        assertThat(output.toString()).contains("customGeneration=not_started");
+        assertThat(output.toString()).contains("customApply=not_started");
+        assertThat(output.toString()).contains("hasSuccessfulApply=false");
+    }
+
     private String customThemeJson() {
         CustomThemeSeeds light =
                 new CustomThemeSeeds(0xFFB69CFF, 0xFF75D5C7, 0xFFFF91B8, 0xFF8C8791);
@@ -1262,7 +1300,7 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
                         false,
                         light,
                         null);
-        return CustomThemeContract.serialize(theme).toString();
+        return CustomThemeContract.serialize(theme, new org.json.JSONObject()).toString();
     }
 
     private String unsupportedCustomThemeJson() {
