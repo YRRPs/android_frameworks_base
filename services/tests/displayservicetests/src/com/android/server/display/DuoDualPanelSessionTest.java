@@ -168,4 +168,77 @@ public class DuoDualPanelSessionTest {
         assertThat(mSession.retarget(6)).isFalse();
         assertThat(mSession.getCoverDisplayId()).isEqualTo(4);
     }
+
+    @Test
+    public void fold_startHoldsTheCover() {
+        assertThat(mSession.start(3, DuoDualPanelSession.Kind.FOLD)).isTrue();
+        assertThat(mSession.getKind()).isEqualTo(DuoDualPanelSession.Kind.FOLD);
+        assertThat(mSession.isFoldHoldingCover()).isTrue();
+        assertThat(mSession.isHandedOver()).isFalse();
+        assertThat(mSession.keepsDisplayEnabled(3)).isTrue();
+    }
+
+    @Test
+    public void fold_innerToInnerCommit_keepsHoldingTheCover() {
+        mSession.start(3, DuoDualPanelSession.Kind.FOLD);
+        assertThat(mSession.onDeviceStateCommitted(/* innerPrimary= */ true, /* opened= */ false))
+                .isEqualTo(DuoDualPanelSession.Step.NONE);
+        assertThat(mSession.isFoldHoldingCover()).isTrue();
+    }
+
+    @Test
+    public void fold_reachingCoverPrimary_handsOverToTheInnerPanel() {
+        mSession.start(3, DuoDualPanelSession.Kind.FOLD);
+        assertThat(mSession.onDeviceStateCommitted(/* innerPrimary= */ false, /* opened= */ false))
+                .isEqualTo(DuoDualPanelSession.Step.HAND_OVER);
+        assertThat(mSession.handOver(1)).isTrue();
+        assertThat(mSession.isHandedOver()).isTrue();
+        assertThat(mSession.isFoldHoldingCover()).isFalse();
+        assertThat(mSession.getCoverDisplayId()).isEqualTo(1);
+        assertThat(mSession.keepsDisplayEnabled(1)).isTrue();
+        assertThat(mSession.handOver(5)).isFalse();
+    }
+
+    @Test
+    public void fold_animationFinished_powersTheHeldPanelOff() {
+        mSession.start(1, DuoDualPanelSession.Kind.FOLD);
+        mSession.handOver(1);
+        assertThat(mSession.onAnimationFinished()).isEqualTo(DuoDualPanelSession.Step.POWER_OFF);
+        assertThat(mSession.getEndReason()).isEqualTo("FINISHED");
+        assertThat(mSession.onPanelState(1, /* off= */ true))
+                .isEqualTo(DuoDualPanelSession.Step.DISABLE);
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.IDLE);
+    }
+
+    @Test
+    public void open_animationFinished_isIgnored() {
+        mSession.start(4);
+        assertThat(mSession.onAnimationFinished()).isEqualTo(DuoDualPanelSession.Step.NONE);
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.LIT);
+    }
+
+    @Test
+    public void fold_handedOver_reopenEndsAtOnce() {
+        mSession.start(1, DuoDualPanelSession.Kind.FOLD);
+        mSession.handOver(1);
+        assertThat(mSession.onReopened()).isEqualTo(DuoDualPanelSession.Step.END_NOW);
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.IDLE);
+        assertThat(mSession.getEndReason()).isEqualTo("REOPENED");
+    }
+
+    @Test
+    public void fold_holdingCover_reopenIsIgnored() {
+        mSession.start(3, DuoDualPanelSession.Kind.FOLD);
+        assertThat(mSession.onReopened()).isEqualTo(DuoDualPanelSession.Step.NONE);
+        assertThat(mSession.isFoldHoldingCover()).isTrue();
+    }
+
+    @Test
+    public void endNow_endsWithoutPowerOff() {
+        mSession.start(3, DuoDualPanelSession.Kind.FOLD);
+        assertThat(mSession.endNow("STOCK")).isEqualTo(DuoDualPanelSession.Step.END_NOW);
+        assertThat(mSession.getState()).isEqualTo(DuoDualPanelSession.State.IDLE);
+        assertThat(mSession.getEndReason()).isEqualTo("STOCK");
+        assertThat(mSession.endNow("AGAIN")).isEqualTo(DuoDualPanelSession.Step.NONE);
+    }
 }

@@ -1181,6 +1181,28 @@ public final class DisplayManager {
         mGlobal.enableConnectedDisplay(displayId);
     }
 
+    /**
+     * YRRP Duo: the fold animation started; light the cover alongside the inner panel.
+     * @hide
+     */
+    public static final int DUO_FOLD_PHASE_STARTED = 1;
+
+    /**
+     * YRRP Duo: the fold animation finished or was cancelled; turn the outgoing panel off.
+     * @hide
+     */
+    public static final int DUO_FOLD_PHASE_FINISHED = 2;
+
+    /**
+     * YRRP Duo: reports the fold animation phase, {@link #DUO_FOLD_PHASE_STARTED} or
+     * {@link #DUO_FOLD_PHASE_FINISHED}, so both panels stay lit while it runs.
+     * @hide
+     */
+    @RequiresPermission("android.permission.MANAGE_DISPLAYS")
+    public void setDuoFoldPhase(int phase) {
+        mGlobal.setDuoFoldPhase(phase);
+    }
+
 
     /**
      * Disable a connected display that is currently enabled.

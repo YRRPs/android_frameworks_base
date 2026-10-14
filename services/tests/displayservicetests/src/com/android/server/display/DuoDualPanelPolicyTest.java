@@ -54,4 +54,40 @@ public class DuoDualPanelPolicyTest {
     public void asleep_doesNot() {
         assertThat(decide(false, true, true, false)).isFalse();
     }
+
+    private static boolean decideFold(boolean fromInnerPrimary, boolean toInnerPrimary,
+            boolean duo, boolean interactive, boolean sleeps) {
+        return DuoDualPanelPolicy.keepsOutgoingLitOnFold(
+                fromInnerPrimary, toInnerPrimary, duo, interactive, sleeps);
+    }
+
+    @Test
+    public void foldingWithDuoWhileInteractive_keepsTheInnerLit() {
+        assertThat(decideFold(true, false, true, true, false)).isTrue();
+    }
+
+    @Test
+    public void fold_opening_doesNot() {
+        assertThat(decideFold(false, true, true, true, false)).isFalse();
+    }
+
+    @Test
+    public void fold_openedToHalfOpened_doesNot() {
+        assertThat(decideFold(true, true, true, true, false)).isFalse();
+    }
+
+    @Test
+    public void fold_notDuo_doesNot() {
+        assertThat(decideFold(true, false, false, true, false)).isFalse();
+    }
+
+    @Test
+    public void fold_asleep_doesNot() {
+        assertThat(decideFold(true, false, true, false, false)).isFalse();
+    }
+
+    @Test
+    public void fold_thatSleeps_doesNot() {
+        assertThat(decideFold(true, false, true, true, true)).isFalse();
+    }
 }

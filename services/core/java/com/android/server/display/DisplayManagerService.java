@@ -5777,6 +5777,20 @@ public final class DisplayManagerService extends SystemService {
             return DisplayManagerService.this.requestDisplayPower(displayId, state);
         }
 
+        @EnforcePermission(MANAGE_DISPLAYS)
+        @Override // Binder call
+        public void setDuoFoldPhase(int phase) {
+            setDuoFoldPhase_enforcePermission();
+            final long token = Binder.clearCallingIdentity();
+            try {
+                synchronized (mSyncRoot) {
+                    mLogicalDisplayMapper.onDuoFoldPhaseLocked(phase);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
         @EnforcePermission(RESTRICT_DISPLAY_MODES)
         @Override // Binder call
         public void requestDisplayModes(IBinder token, int displayId, @Nullable int[] modeIds) {

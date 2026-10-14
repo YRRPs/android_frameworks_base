@@ -76,6 +76,7 @@ import android.app.PropertyInvalidatedCache;
 import android.content.Context;
 import android.content.res.Resources;
 import android.hardware.devicestate.DeviceState;
+import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.IPowerManager;
 import android.os.IThermalService;
@@ -1813,6 +1814,191 @@ public class LogicalDisplayMapperTest {
     }
 
     @Test
+    public void duoFold_withoutStart_keepsInnerLitUntilAnimationFinishes() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        when(mFoldSettingProviderMock.shouldStayAwakeOnFold()).thenReturn(true);
+
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+        mLooper.dispatchAll();
+
+        // Committed while the inner panel is still on, and the inner panel stays lit.
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        assertEquals(DEFAULT_DISPLAY, id(cover));
+        assertTrue(cover.isEnabledLocked());
+        assertFalse(cover.isInTransitionLocked());
+        LogicalDisplay inner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+        assertNotEquals(DEFAULT_DISPLAY, id(inner));
+        assertTrue(inner.isEnabledLocked());
+        assertFalse(inner.isInTransitionLocked());
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.State.LIT, session.getState());
+        assertEquals(DuoDualPanelSession.Kind.FOLD, session.getKind());
+        assertTrue(session.isHandedOver());
+        assertEquals(id(inner), session.getCoverDisplayId());
+
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_FINISHED);
+
+        assertTrue(inner.isInTransitionLocked());
+        assertTrue(inner.isEnabledLocked());
+        assertEquals("FINISHED", session.getEndReason());
+        devices.mInner.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mInner);
+        assertFalse(inner.isEnabledLocked());
+        assertFalse(inner.isInTransitionLocked());
+        assertEquals(DuoDualPanelSession.State.IDLE, session.getState());
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mOuter)));
+    }
+
+    @Test
+    public void duoFold_started_lightsCoverThenHandsOverToInnerAtClosed() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        when(mFoldSettingProviderMock.shouldStayAwakeOnFold()).thenReturn(true);
+
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_STARTED);
+
+        // Both panels are lit while the inner panel is still the default display.
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        assertNotEquals(DEFAULT_DISPLAY, id(cover));
+        assertTrue(cover.isEnabledLocked());
+        assertDisplayEnabled(devices.mInner);
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.Kind.FOLD, session.getKind());
+        assertTrue(session.isFoldHoldingCover());
+        assertEquals(id(cover), session.getCoverDisplayId());
+        devices.mOuter.setState(STATE_ON);
+
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+        mLooper.dispatchAll();
+
+        // Neither panel was blanked: the cover is the default display, the inner one still lit.
+        LogicalDisplay movedCover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        assertEquals(DEFAULT_DISPLAY, id(movedCover));
+        assertTrue(movedCover.isEnabledLocked());
+        assertFalse(movedCover.isInTransitionLocked());
+        LogicalDisplay inner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+        assertNotEquals(DEFAULT_DISPLAY, id(inner));
+        assertTrue(inner.isEnabledLocked());
+        assertFalse(inner.isInTransitionLocked());
+        assertTrue(session.isHandedOver());
+        assertEquals(DuoDualPanelSession.State.LIT, session.getState());
+        assertEquals(id(inner), session.getCoverDisplayId());
+
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_FINISHED);
+        devices.mInner.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mInner);
+
+        assertDisplayDisabled(devices.mInner);
+        assertDisplayEnabled(devices.mOuter);
+        assertEquals(DuoDualPanelSession.State.IDLE, session.getState());
+    }
+
+    @Test
+    public void duoFold_startedThenAbandoned_turnsCoverOffWhenPanelOff() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_STARTED);
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        devices.mOuter.setState(STATE_ON);
+
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_FINISHED);
+
+        assertTrue(cover.isInTransitionLocked());
+        assertTrue(cover.isEnabledLocked());
+        assertEquals("FINISHED", mLogicalDisplayMapper.getDuoDualPanelSessionLocked()
+                .getEndReason());
+        assertCoverDisabledOnlyOncePanelOff(devices, cover);
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mInner)));
+    }
+
+    @Test
+    public void duoFold_startedNeverClosed_timeoutTurnsCoverOff() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_STARTED);
+        LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
+        devices.mOuter.setState(STATE_ON);
+
+        moveTime(DuoDualPanelSession.FOLD_TIMEOUT_MS);
+
+        assertTrue(cover.isInTransitionLocked());
+        assertEquals("TIMEOUT", mLogicalDisplayMapper.getDuoDualPanelSessionLocked()
+                .getEndReason());
+        assertCoverDisabledOnlyOncePanelOff(devices, cover);
+    }
+
+    @Test
+    public void duoFold_startWhileNotInteractive_isIgnored() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        mLogicalDisplayMapper.onEarlyInteractivityChange(false);
+
+        mLogicalDisplayMapper.onDuoFoldPhaseLocked(DisplayManager.DUO_FOLD_PHASE_STARTED);
+
+        assertDisplayDisabled(devices.mOuter);
+        assertEquals(DuoDualPanelSession.State.IDLE,
+                mLogicalDisplayMapper.getDuoDualPanelSessionLocked().getState());
+    }
+
+    @Test
+    public void duoFold_unfoldBeforeFinished_keepsInnerLitAsDefault() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        when(mFoldSettingProviderMock.shouldStayAwakeOnFold()).thenReturn(true);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+        mLooper.dispatchAll();
+        devices.mOuter.setState(STATE_ON);
+
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_HALF_OPEN);
+        mLooper.dispatchAll();
+
+        // The fold session ended, and the still-lit inner panel moved back without blanking.
+        LogicalDisplay inner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+        assertEquals(DEFAULT_DISPLAY, id(inner));
+        assertTrue(inner.isEnabledLocked());
+        assertFalse(inner.isInTransitionLocked());
+        DuoDualPanelSession session = mLogicalDisplayMapper.getDuoDualPanelSessionLocked();
+        assertEquals(DuoDualPanelSession.Kind.OPEN, session.getKind());
+        assertEquals(DuoDualPanelSession.State.LIT, session.getState());
+    }
+
+    @Test
+    public void notDuo_fold_waitsForInnerOff() {
+        FoldableDisplayDevices devices = setUpDuoOpened();
+        when(mFoldSettingProviderMock.shouldStayAwakeOnFold()).thenReturn(true);
+        when(mFoldSettingProviderMock.isDuoFoldAnimationActive()).thenReturn(false);
+        LogicalDisplay inner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_CLOSED);
+        mLooper.dispatchAll();
+
+        assertTrue(inner.isInTransitionLocked());
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mInner)));
+
+        devices.mInner.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mInner);
+
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mOuter)));
+        assertDisplayDisabled(devices.mInner);
+        assertEquals(DuoDualPanelSession.State.IDLE,
+                mLogicalDisplayMapper.getDuoDualPanelSessionLocked().getState());
+    }
+
+    @Test
+    public void duoUnfold_innerAlreadyLit_movesWithoutBlanking() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        LogicalDisplay inner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+        mLogicalDisplayMapper.setDisplayEnabledLocked(inner, true);
+        devices.mInner.setState(STATE_ON);
+
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_HALF_OPEN);
+        mLooper.dispatchAll();
+
+        // Committed while the inner panel is still on: it was not blanked on the way.
+        LogicalDisplay movedInner = mLogicalDisplayMapper.getDisplayLocked(devices.mInner);
+        assertEquals(DEFAULT_DISPLAY, id(movedInner));
+        assertTrue(movedInner.isEnabledLocked());
+        assertFalse(movedInner.isInTransitionLocked());
+        assertEquals(DuoDualPanelSession.State.LIT,
+                mLogicalDisplayMapper.getDuoDualPanelSessionLocked().getState());
+    }
+
+    @Test
     public void notDuo_unfold_isUnchanged() {
         FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ false);
         LogicalDisplay cover = mLogicalDisplayMapper.getDisplayLocked(devices.mOuter);
@@ -1959,6 +2145,22 @@ public class LogicalDisplayMapperTest {
         devices.mOuter.setState(STATE_ON);
         devices.mInner.setState(STATE_OFF);
         assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mOuter)));
+        clearInvocations(mListenerMock);
+        return devices;
+    }
+
+    /** Boots folded, unfolds with Duo to OPENED, and lets the cover session finish. */
+    private FoldableDisplayDevices setUpDuoOpened() {
+        FoldableDisplayDevices devices = setUpDuoFolded(/* duoActive= */ true);
+        unfoldDuo(devices);
+        devices.mInner.setState(STATE_ON);
+        mLogicalDisplayMapper.setDeviceStateLocked(DUO_STATE_OPEN);
+        mLooper.dispatchAll();
+        devices.mOuter.setState(STATE_OFF);
+        notifyDisplayChanges(devices.mOuter);
+        assertEquals(DuoDualPanelSession.State.IDLE,
+                mLogicalDisplayMapper.getDuoDualPanelSessionLocked().getState());
+        assertEquals(DEFAULT_DISPLAY, id(mLogicalDisplayMapper.getDisplayLocked(devices.mInner)));
         clearInvocations(mListenerMock);
         return devices;
     }

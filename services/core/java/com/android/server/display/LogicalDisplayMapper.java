@@ -41,6 +41,7 @@ import android.hardware.devicestate.DeviceState;
 import android.hardware.devicestate.DeviceStateManager;
 import android.hardware.devicestate.feature.flags.FeatureFlags;
 import android.hardware.devicestate.feature.flags.FeatureFlagsImpl;
+import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -234,13 +235,32 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private final DisplayGroupAllocator mDisplayGroupAllocator;
     private final Predicate<DisplayInfo> mIsDisplayAllowedInTopology;
 
-    /** YRRP Duo: the open during which the cover panel stays lit on its own logical display. */
+    /** YRRP Duo: the open or fold during which both panels stay lit. */
     private final DuoDualPanelSession mDuoDualPanel = new DuoDualPanelSession();
 
-    /** YRRP Duo: the cover device the pending transition keeps lit; consumed at commit. */
+    /**
+     * YRRP Duo: the outgoing device the pending transition keeps lit, the cover on an unfold and
+     * the inner panel on a fold; consumed at commit.
+     */
     private DisplayDevice mPendingDuoCoverDevice;
 
-    /** YRRP Duo: the cover device of the active session, so its logical display is recognised. */
+    /** YRRP Duo: whether the pending transition is a Duo fold; consumed at commit. */
+    private boolean mPendingDuoFold;
+
+    /**
+     * YRRP Duo: a second device the pending transition keeps lit, so the swap moves it without
+     * a power cycle: the cover a fold session lit early, or an inner panel already lit before an
+     * unfold. Consumed at commit.
+     */
+    private DisplayDevice mPendingDuoKeptDevice;
+
+    /** YRRP Duo: the last gate decision, for dumpsys. */
+    private String mDuoLastGate = "NONE";
+
+    /**
+     * YRRP Duo: the device the active session holds lit, so its logical display is recognised:
+     * the cover, or the inner panel once a fold session is handed over.
+     */
     private DisplayDevice mDuoCoverDevice;
 
     LogicalDisplayMapper(@NonNull Context context, FoldSettingProvider foldSettingProvider,
@@ -505,8 +525,11 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         ipw.println("mDeviceStateToBeAppliedAfterBoot="
                 + mDeviceStateToBeAppliedAfterBoot.getIdentifier());
         ipw.println("yrrpDualPanel=" + mDuoDualPanel.getState()
+                + " kind=" + mDuoDualPanel.getKind()
+                + " handedOver=" + mDuoDualPanel.isHandedOver()
                 + " display=" + mDuoDualPanel.getCoverDisplayId()
                 + " lastEnd=" + mDuoDualPanel.getEndReason());
+        ipw.println("yrrpLastGate=" + mDuoLastGate);
 
         final int logicalDisplayCount = mLogicalDisplays.size();
         ipw.println();
@@ -577,11 +600,22 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         // the transition is smooth. Plus, on some devices, only one internal displays can be
         // on at a time. We use LogicalDisplay.setIsInTransition to mark a display that needs to be
         // temporarily turned off.
-        final LogicalDisplay duoKeepLit = findDuoKeepLitDisplayLocked(state);
+        final LogicalDisplay duoKeepLit = findDuoKeepLitDisplayLocked(state,
+                shouldDeviceBePutToSleep(state, mDeviceState, mInteractive, mBootCompleted));
+        final boolean duoFold = duoKeepLit != null && isInnerPrimary(mDeviceState);
+        // A fold, or an inner-to-inner change such as OPENED to HALF_OPENED on the way down, keeps
+        // the cover a fold session lit early; an unfold keeps an inner panel that is already on.
+        final boolean innerToInner = isInnerPrimary(mDeviceState) && isInnerPrimary(state);
+        final LogicalDisplay duoKeepLitToo = duoFold || innerToInner
+                ? (mDuoDualPanel.isFoldHoldingCover() ? getDuoCoverDisplayLocked() : null)
+                : findDuoLitInnerLocked(state, duoKeepLit);
         mPendingDuoCoverDevice =
                 duoKeepLit == null ? null : duoKeepLit.getPrimaryDisplayDeviceLocked();
+        mPendingDuoFold = duoFold;
+        mPendingDuoKeptDevice =
+                duoKeepLitToo == null ? null : duoKeepLitToo.getPrimaryDisplayDeviceLocked();
         resetLayoutLocked(mDeviceState.getIdentifier(),
-                state.getIdentifier(), /* transitionValue= */ true, duoKeepLit);
+                state.getIdentifier(), /* transitionValue= */ true, duoKeepLit, duoKeepLitToo);
         mPendingDeviceState = state;
         mDeviceStateToBeAppliedAfterBoot = INVALID_DEVICE_STATE;
         final boolean wakeDevice = shouldDeviceBeWoken(mPendingDeviceState, mDeviceState,
@@ -756,19 +790,32 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private void transitionToPendingStateLocked() {
         resetLayoutLocked(mDeviceState.getIdentifier(),
                 mPendingDeviceState.getIdentifier(), /* transitionValue= */ false,
-                /* keepLit= */ null);
+                /* keepLit= */ null, /* keepLitToo= */ null);
         final DeviceState fromState = mDeviceState;
         mDeviceState = mPendingDeviceState;
         mPendingDeviceState = INVALID_DEVICE_STATE;
         final DisplayDevice duoCoverDevice = mPendingDuoCoverDevice;
+        final boolean duoFold = mPendingDuoFold;
         mPendingDuoCoverDevice = null;
+        mPendingDuoFold = false;
+        mPendingDuoKeptDevice = null;
         // YRRP Duo: settle a running session before the layout is applied, so a fold back gets
         // the stock layout. Its step is performed once the layout is in place.
-        final DuoDualPanelSession.Step duoStep = mDuoDualPanel.onDeviceStateCommitted(
+        DuoDualPanelSession.Step duoStep = mDuoDualPanel.onDeviceStateCommitted(
                 isInnerPrimary(mDeviceState), isFullyOpened(mDeviceState));
+        if (duoStep == DuoDualPanelSession.Step.HAND_OVER && !duoFold) {
+            // The fold took the stock swap after all: the cover is the layout's default display.
+            duoStep = mDuoDualPanel.endNow("STOCK");
+        }
         applyLayoutLocked();
-        if (duoCoverDevice != null) {
-            startDuoDualPanelLocked(duoCoverDevice, fromState);
+        if (duoStep == DuoDualPanelSession.Step.HAND_OVER) {
+            handOverDuoFoldLocked(duoCoverDevice);
+        } else if (duoCoverDevice != null) {
+            if (duoFold) {
+                startDuoFoldAtCommitLocked(duoCoverDevice);
+            } else {
+                startDuoDualPanelLocked(duoCoverDevice, fromState);
+            }
         } else if (duoStep != DuoDualPanelSession.Step.NONE) {
             applyDuoDualPanelStepLocked(duoStep);
         } else if (mDuoDualPanel.getState() == DuoDualPanelSession.State.POWERING_OFF) {
@@ -1216,9 +1263,10 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
      * @param toState The state we are switching to.
      * @param transitionValue The value to mark the transition state: true == transitioning.
      * @param keepLit A display left out of the transition, or null.
+     * @param keepLitToo A second display left out of the transition, or null.
      */
     private void resetLayoutLocked(int fromState, int toState, boolean transitionValue,
-            @Nullable LogicalDisplay keepLit) {
+            @Nullable LogicalDisplay keepLit, @Nullable LogicalDisplay keepLitToo) {
         final Layout fromLayout = mDeviceStateToLayoutMap.get(fromState);
         final Layout toLayout = mDeviceStateToLayoutMap.get(toState);
 
@@ -1231,8 +1279,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 // If there's no device, then the logical display is due to be removed. Ignore it.
                 continue;
             }
-            if (logicalDisplay == keepLit) {
-                // YRRP Duo: the cover stays lit; it is moved, not blanked.
+            if (logicalDisplay == keepLit || logicalDisplay == keepLitToo) {
+                // YRRP Duo: the outgoing panel, or an inner panel that is already lit, stays
+                // lit; it is moved, not blanked.
                 continue;
             }
 
@@ -1361,65 +1410,128 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     /**
-     * YRRP Duo: the logical display an unfold to {@code toState} keeps lit, or null when the
-     * change is not a Duo open or a session is already running. A direct snap to OPENED (skipping
-     * HALF_OPENED) is left to the stock swap: a session there would only end on its timeout.
+     * YRRP Duo: the logical display a change to {@code toState} keeps lit, or null when the
+     * change is not a Duo open or fold, or a session is already running. An unfold keeps the
+     * cover lit; a fold keeps the inner panel lit, so the cover turns on without waiting for it
+     * to power off. A direct snap to OPENED (skipping HALF_OPENED) is left to the stock swap: a
+     * session there would only end on its timeout. A fold that puts the device to sleep is left
+     * to the stock swap too.
      */
     @Nullable
-    private LogicalDisplay findDuoKeepLitDisplayLocked(DeviceState toState) {
-        // Only an unfold can keep the cover lit; no other change reads the Duo setting.
-        if (mDeviceState.equals(INVALID_DEVICE_STATE) || isInnerPrimary(mDeviceState)
-                || !isInnerPrimary(toState)) {
+    private LogicalDisplay findDuoKeepLitDisplayLocked(DeviceState toState, boolean sleepDevice) {
+        // Only a change between cover and inner primary keeps a panel lit; no other change reads
+        // the Duo setting.
+        if (mDeviceState.equals(INVALID_DEVICE_STATE)
+                || isInnerPrimary(mDeviceState) == isInnerPrimary(toState)) {
             return null;
         }
+        final boolean fold = isInnerPrimary(mDeviceState);
         String duo = "unread";
         LogicalDisplay keepLit = null;
         final String reason;
-        if (isFullyOpened(toState)) {
+        if (!fold && isFullyOpened(toState)) {
             reason = "snap-to-opened";
         } else if (!mInteractive) {
             reason = "not-interactive";
+        } else if (fold && sleepDevice) {
+            reason = "sleep";
+            // A fold that sleeps gets the stock swap; a cover lit early goes off with it.
+            if (mDuoDualPanel.isFoldHoldingCover()) {
+                applyDuoDualPanelStepLocked(mDuoDualPanel.cancel());
+            }
         } else {
+            if (!fold) {
+                // Unfolding again while a fold session still holds the inner panel: that panel is
+                // the default display of the layout ahead, so the session ends here.
+                applyDuoDualPanelStepLocked(mDuoDualPanel.onReopened());
+            }
             final boolean duoActive = mFoldSettingProvider.isDuoFoldAnimationActive();
             duo = String.valueOf(duoActive);
-            if (!DuoDualPanelPolicy.keepsOutgoingLit(isInnerPrimary(mDeviceState),
-                    isInnerPrimary(toState), duoActive, mInteractive)) {
+            final boolean keeps = fold
+                    ? DuoDualPanelPolicy.keepsOutgoingLitOnFold(isInnerPrimary(mDeviceState),
+                            isInnerPrimary(toState), duoActive, mInteractive, sleepDevice)
+                    : DuoDualPanelPolicy.keepsOutgoingLit(isInnerPrimary(mDeviceState),
+                            isInnerPrimary(toState), duoActive, mInteractive);
+            if (!keeps) {
                 reason = "duo-off";
-            } else if (mDuoDualPanel.getState() != DuoDualPanelSession.State.IDLE) {
+            } else if (mDuoDualPanel.getState() != DuoDualPanelSession.State.IDLE
+                    && !(fold && mDuoDualPanel.isFoldHoldingCover())) {
                 reason = "session-active";
             } else {
                 final Layout fromLayout =
                         mDeviceStateToLayoutMap.get(mDeviceState.getIdentifier());
                 keepLit = fromLayout == null
                         ? null : findLogicalDisplayForLayoutDefaultLocked(fromLayout);
-                reason = keepLit == null ? "no-cover" : "armed";
+                reason = keepLit != null ? "armed" : fold ? "no-inner" : "no-cover";
             }
         }
-        Slog.i(TAG, "YrrpDualPanel: gate duo=" + duo + " interactive=" + mInteractive
+        mDuoLastGate = (fold ? "fold" : "unfold") + ":" + reason;
+        Slog.i(TAG, "YrrpDualPanel: gate dir=" + (fold ? "fold" : "unfold") + " duo=" + duo
+                + " interactive=" + mInteractive + " sleep=" + sleepDevice
                 + " started=" + (keepLit != null) + " reason=" + reason
                 + " session=" + mDuoDualPanel.getState());
         return keepLit;
     }
 
     /**
-     * YRRP Duo: going to sleep before a pending Duo open commits. The cover was left out of the
-     * transition blanking; blank it now, as the stock transition would have, so the commit never
-     * moves a lit cover onto a disabled display.
+     * YRRP Duo: on an unfold that keeps the cover lit, the logical display of an inner panel
+     * that is already on, or null. The stock swap moves the inner panel to the default display
+     * and blanks it on the way, power-cycling a panel that something lit early; left out of the
+     * blanking, it stays on.
+     */
+    @Nullable
+    private LogicalDisplay findDuoLitInnerLocked(DeviceState toState,
+            @Nullable LogicalDisplay coverKeepLit) {
+        if (coverKeepLit == null || isInnerPrimary(mDeviceState)) {
+            return null;
+        }
+        final Layout toLayout = mDeviceStateToLayoutMap.get(toState.getIdentifier());
+        final Layout.Display defaultDisplay =
+                toLayout == null ? null : toLayout.getById(DEFAULT_DISPLAY);
+        if (defaultDisplay == null) {
+            return null;
+        }
+        final DisplayDevice device =
+                mDisplayDeviceRepo.getByAddressLocked(defaultDisplay.getAddress());
+        final LogicalDisplay inner = device == null ? null : getDisplayLocked(device);
+        if (inner == null || inner == coverKeepLit || !inner.isEnabledLocked()
+                || device.getDisplayDeviceInfoLocked().state == Display.STATE_OFF) {
+            return null;
+        }
+        Slog.i(TAG, "YrrpDualPanel: inner already lit, kept display=" + inner.getDisplayIdLocked());
+        return inner;
+    }
+
+    /**
+     * YRRP Duo: going to sleep before a pending Duo open or fold commits. The panels it kept lit
+     * were left out of the transition blanking; blank them now, as the stock transition would
+     * have, so the commit never moves a lit panel onto a disabled display.
      */
     private void dropPendingDuoOpenLocked() {
         final DisplayDevice coverDevice = mPendingDuoCoverDevice;
         if (coverDevice == null) {
             return;
         }
+        final DisplayDevice keptDevice = mPendingDuoKeptDevice;
         mPendingDuoCoverDevice = null;
-        final LogicalDisplay cover = getDisplayLocked(coverDevice);
-        if (cover != null && !cover.isInTransitionLocked()) {
-            cover.setIsInTransitionLocked(true);
-            markDuoCoverTransitionLocked(cover);
-            updateLogicalDisplaysLocked();
-        }
-        Slog.i(TAG, "YrrpDualPanel: pending open dropped on sleep display="
+        mPendingDuoFold = false;
+        mPendingDuoKeptDevice = null;
+        final LogicalDisplay cover = blankDuoKeptDisplayLocked(coverDevice);
+        blankDuoKeptDisplayLocked(keptDevice);
+        updateLogicalDisplaysLocked();
+        Slog.i(TAG, "YrrpDualPanel: pending change dropped on sleep display="
                 + (cover == null ? "none" : cover.getDisplayIdLocked()));
+    }
+
+    /** Marks a display a pending Duo change kept lit in transition, as the stock swap would. */
+    @Nullable
+    private LogicalDisplay blankDuoKeptDisplayLocked(@Nullable DisplayDevice device) {
+        final LogicalDisplay display = device == null ? null : getDisplayLocked(device);
+        if (display != null && !display.isInTransitionLocked()) {
+            display.setIsInTransitionLocked(true);
+            markDuoCoverTransitionLocked(display);
+        }
+        return display;
     }
 
     /**
@@ -1468,11 +1580,126 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         return state.hasProperty(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN);
     }
 
+    /**
+     * YRRP Duo: SystemUI reports its fold animation phase. STARTED, while the inner panel is the
+     * default display, lights the cover on its own logical display so both panels render the
+     * animation. FINISHED turns the held panel off, the cover if the fold never closed and the
+     * inner panel once it did.
+     */
+    void onDuoFoldPhaseLocked(int phase) {
+        if (phase == DisplayManager.DUO_FOLD_PHASE_FINISHED) {
+            Slog.i(TAG, "YrrpDualPanel: fold finished session=" + mDuoDualPanel.getState()
+                    + " kind=" + mDuoDualPanel.getKind());
+            applyDuoDualPanelStepLocked(mDuoDualPanel.onAnimationFinished());
+            return;
+        }
+        if (phase != DisplayManager.DUO_FOLD_PHASE_STARTED) {
+            Slog.w(TAG, "YrrpDualPanel: unknown fold phase=" + phase);
+            return;
+        }
+        LogicalDisplay cover = null;
+        final String reason;
+        if (!isInnerPrimary(mDeviceState)
+                || !mPendingDeviceState.equals(INVALID_DEVICE_STATE)) {
+            reason = "not-open";
+        } else if (!mInteractive) {
+            // Enabling a display while asleep can stall SurfaceFlinger's screenshots.
+            reason = "not-interactive";
+        } else if (!mFoldSettingProvider.isDuoFoldAnimationActive()) {
+            reason = "duo-off";
+        } else if (mDuoDualPanel.getState() != DuoDualPanelSession.State.IDLE) {
+            reason = "session-active";
+        } else {
+            cover = findLayoutDisabledDisplayLocked();
+            reason = cover == null ? "no-cover" : "armed";
+        }
+        mDuoLastGate = "fold-start:" + reason;
+        Slog.i(TAG, "YrrpDualPanel: fold start gate reason=" + reason
+                + " session=" + mDuoDualPanel.getState());
+        if (cover == null || !mDuoDualPanel.start(cover.getDisplayIdLocked(),
+                DuoDualPanelSession.Kind.FOLD)) {
+            return;
+        }
+        mDuoCoverDevice = cover.getPrimaryDisplayDeviceLocked();
+        setEnabledLocked(cover, true);
+        mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_TIMEOUT);
+        mHandler.sendEmptyMessageDelayed(MSG_YRRP_DUAL_PANEL_TIMEOUT,
+                DuoDualPanelSession.FOLD_TIMEOUT_MS);
+        Slog.i(TAG, "YrrpDualPanel: fold start display=" + cover.getDisplayIdLocked());
+        updateLogicalDisplaysLocked();
+    }
+
+    /** The logical display of a device the current layout lists as disabled, if it has one. */
+    @Nullable
+    private LogicalDisplay findLayoutDisabledDisplayLocked() {
+        if (mCurrentLayout == null) {
+            return null;
+        }
+        for (int i = 0; i < mCurrentLayout.size(); i++) {
+            final Layout.Display layoutDisplay = mCurrentLayout.getAt(i);
+            if (layoutDisplay.isEnabled()) {
+                continue;
+            }
+            final DisplayDevice device =
+                    mDisplayDeviceRepo.getByAddressLocked(layoutDisplay.getAddress());
+            final LogicalDisplay display = device == null ? null : getDisplayLocked(device);
+            if (display != null && !display.isEnabledLocked()) {
+                return display;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * YRRP Duo: the fold reached a cover-primary state; the cover is now the default display.
+     * The session takes the inner panel on the disabled display the layout just moved it to, and
+     * keeps it lit until SystemUI's animation finishes.
+     */
+    private void handOverDuoFoldLocked(@Nullable DisplayDevice innerDevice) {
+        final LogicalDisplay inner = innerDevice == null ? null : getDisplayLocked(innerDevice);
+        if (inner == null || inner.isEnabledLocked()
+                || !mDuoDualPanel.handOver(inner.getDisplayIdLocked())) {
+            Slog.w(TAG, "YrrpDualPanel: fold hand-over failed display="
+                    + (inner == null ? "none" : inner.getDisplayIdLocked()));
+            applyDuoDualPanelStepLocked(mDuoDualPanel.endNow("HAND_OVER_FAILED"));
+            return;
+        }
+        mDuoCoverDevice = innerDevice;
+        setEnabledLocked(inner, true);
+        mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_TIMEOUT);
+        mHandler.sendEmptyMessageDelayed(MSG_YRRP_DUAL_PANEL_TIMEOUT,
+                DuoDualPanelSession.TIMEOUT_MS);
+        Slog.i(TAG, "YrrpDualPanel: fold hand-over display=" + inner.getDisplayIdLocked());
+    }
+
+    /**
+     * YRRP Duo: a fold that reached a cover-primary state before SystemUI's animation started.
+     * The inner panel stays lit on its new display until the animation finishes.
+     */
+    private void startDuoFoldAtCommitLocked(DisplayDevice innerDevice) {
+        final LogicalDisplay inner = getDisplayLocked(innerDevice);
+        if (inner == null || inner.isEnabledLocked()
+                || !mDuoDualPanel.start(inner.getDisplayIdLocked(), DuoDualPanelSession.Kind.FOLD)
+                || !mDuoDualPanel.handOver(inner.getDisplayIdLocked())) {
+            Slog.w(TAG, "YrrpDualPanel: fold not started display="
+                    + (inner == null ? "none" : inner.getDisplayIdLocked())
+                    + " state=" + mDuoDualPanel.getState());
+            return;
+        }
+        mDuoCoverDevice = innerDevice;
+        setEnabledLocked(inner, true);
+        mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_TIMEOUT);
+        mHandler.sendEmptyMessageDelayed(MSG_YRRP_DUAL_PANEL_TIMEOUT,
+                DuoDualPanelSession.TIMEOUT_MS);
+        Slog.i(TAG, "YrrpDualPanel: fold start at commit display=" + inner.getDisplayIdLocked());
+    }
+
     /** Starts a session for the cover device the layout just moved to a disabled display. */
     private void startDuoDualPanelLocked(DisplayDevice coverDevice, DeviceState fromState) {
         final LogicalDisplay cover = getDisplayLocked(coverDevice);
         // An enabled display is the layout's own; there is nothing to keep lit. Unreachable on
-        // xueying: both inner-primary layouts disable the cover, and only an IDLE session arms.
+        // xueying: both inner-primary layouts disable the cover, the closed layout disables the
+        // inner panel, and only an IDLE session arms.
         if (cover == null || cover.isEnabledLocked()
                 || !mDuoDualPanel.start(cover.getDisplayIdLocked())) {
             Slog.w(TAG, "YrrpDualPanel: not started display="
@@ -1537,8 +1764,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             case END_NOW: {
                 mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_TIMEOUT);
                 mHandler.removeMessages(MSG_YRRP_DUAL_PANEL_OVERDUE);
-                // END_NOW only comes from a commit, whose resetLayoutLocked(false) has already
-                // cleared every in-transition mark, ours included.
+                // END_NOW ends a LIT session, whose display is never marked in transition, or
+                // comes from a commit, whose resetLayoutLocked(false) has already cleared every
+                // in-transition mark, ours included.
                 mDuoCoverDevice = null;
                 Slog.i(TAG, "YrrpDualPanel: end reason=" + mDuoDualPanel.getEndReason()
                         + " display=" + coverId);
