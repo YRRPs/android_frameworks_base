@@ -112,6 +112,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
@@ -869,9 +870,9 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             }
         }
 
-        final Runnable onCompleteCallback = () -> {
+        final Consumer<ThemeOverlayApplier.ApplyResult> onCompleteCallback = result -> {
             Log.d(TAG, "ThemeHomeDelay: ThemeOverlayController ready with user "
-                    + currentUser);
+                    + currentUser + " result=" + result);
             mActivityManager.setThemeOverlayReady(currentUser);
         };
 

@@ -33,9 +33,12 @@ import static com.android.systemui.theme.ThemeOverlayApplier.THEME_CATEGORIES;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,7 +67,9 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -293,6 +298,29 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
         verify(mTransactionBuilder, never()).setEnabled(
                 eq(new OverlayIdentifier("com.example.blah.category")), eq(true),
                 eq(TEST_USER.getIdentifier()));
+    }
+
+    @Test
+    public void applyCurrentUserOverlays_success_reportsOnceAndCommitsOnce() {
+        List<ThemeOverlayApplier.ApplyResult> results = new ArrayList<>();
+
+        mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
+                TEST_USER_HANDLES, results::add);
+
+        assertEquals(List.of(ThemeOverlayApplier.ApplyResult.SUCCESS), results);
+        verify(mOverlayManager, times(1)).commit(any());
+    }
+
+    @Test
+    public void applyCurrentUserOverlays_commitThrows_reportsFailureOnce() {
+        doThrow(new SecurityException("denied")).when(mOverlayManager).commit(any());
+        List<ThemeOverlayApplier.ApplyResult> results = new ArrayList<>();
+
+        mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
+                TEST_USER_HANDLES, results::add);
+
+        assertEquals(List.of(ThemeOverlayApplier.ApplyResult.COMMIT_FAILED), results);
+        verify(mOverlayManager, times(1)).commit(any());
     }
 
     private static OverlayInfo createOverlayInfo(String packageName, String targetPackageName,
