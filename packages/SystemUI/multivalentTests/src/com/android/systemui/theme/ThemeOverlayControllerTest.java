@@ -1270,6 +1270,74 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    public void invalidInitialCustomTheme_afterUserSwitch_fallsBackForNewUser() {
+        when(mUserTracker.getUserId()).thenReturn(USER_SYSTEM);
+        doAnswer(invocation -> {
+            Consumer<ThemeOverlayApplier.ApplyResult> callback = invocation.getArgument(4);
+            callback.accept(ThemeOverlayApplier.ApplyResult.SUCCESS);
+            return null;
+        }).when(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), anyInt(), any(), any());
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        clearInvocations(mThemeOverlayApplier);
+
+        when(mUserTracker.getUserId()).thenReturn(USER_SECONDARY);
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.BLUE), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SECONDARY);
+
+        verify(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), eq(USER_SECONDARY), any(), any());
+    }
+
+    @Test
+    public void unknownColorSource_isBoundedBeforeLoggingAndDump() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn("{\"android.theme.customization.color_source\":\"untrusted-source\"}");
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        verify(mLogger).logSourceSelected("unknown");
+        assertThat(output.toString()).contains("colorSource=unknown");
+        assertThat(output.toString()).doesNotContain("untrusted-source");
+    }
+
+    @Test
+    public void dump_validCustomTheme_excludesUuidAndSeedValues() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        assertThat(output.toString()).doesNotContain("11111111-1111-4111-8111-111111111111");
+        assertThat(output.toString()).doesNotContain("B69CFF");
+        assertThat(output.toString()).doesNotContain("75D5C7");
+    }
+
+    @Test
     public void dump_invalidCustomTheme_containsDecisionKeysAndReason() {
         when(mSecureSettings.getStringForUser(
                 eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))

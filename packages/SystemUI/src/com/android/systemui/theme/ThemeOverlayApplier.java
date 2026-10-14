@@ -310,7 +310,7 @@ public class ThemeOverlayApplier implements Dumpable {
         transaction.setEnabled(
                 new OverlayIdentifier(OVERLAY_BLACK_THEME), isBlackMode, currentUser);
         transaction.setEnabled(
-                new OverlayIdentifier(ANDROID_PACKAGE, "neutral"), !isBlackMode, currentUser);
+                new OverlayIdentifier(SYSUI_PACKAGE, "neutral"), !isBlackMode, currentUser);
     }
 
     @VisibleForTesting

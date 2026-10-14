@@ -308,6 +308,10 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
                 TEST_USER_HANDLES, results::add);
 
         assertEquals(List.of(ThemeOverlayApplier.ApplyResult.SUCCESS), results);
+        verify(mTransactionBuilder).setEnabled(
+                eq(new OverlayIdentifier(SYSUI_PACKAGE, "neutral")),
+                eq(true),
+                eq(TEST_USER.getIdentifier()));
         verify(mOverlayManager, times(1)).commit(any());
     }
 
