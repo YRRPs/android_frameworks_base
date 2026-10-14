@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -68,6 +69,8 @@ import com.android.systemui.flags.Flags;
 import com.android.systemui.flags.SystemPropertiesHelper;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
+import com.android.systemui.monet.CustomThemeContract;
+import com.android.systemui.monet.CustomThemeSeeds;
 import com.android.systemui.monet.DynamicColors;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
@@ -87,10 +90,14 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -119,6 +126,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
     private Handler mBgHandler;
     @Mock
     private ThemeOverlayApplier mThemeOverlayApplier;
+    @Mock
+    private ThemeOverlayControllerLogger mLogger;
     @Mock
     private SecureSettings mSecureSettings;
     @Mock
@@ -189,7 +198,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
 
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, mMainExecutor, mBgExecutor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -931,7 +941,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
 
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, executor, executor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -972,7 +983,8 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
         Executor executor = MoreExecutors.directExecutor();
         mThemeOverlayController = new ThemeOverlayController(mContext,
                 mBroadcastDispatcher, mBgHandler, executor, executor, mThemeOverlayApplier,
-                mSecureSettings, mWallpaperManager, mUserManager, mDeviceProvisionedController,
+                mLogger, mSecureSettings, mWallpaperManager, mUserManager,
+                mDeviceProvisionedController,
                 mUserTracker, mDumpManager, mFeatureFlags, mResources, mWakefulnessLifecycle,
                 mJavaAdapter, mKeyguardTransitionInteractor, mUiModeManager, mUiModeManagerProvider,
                 mActivityManager, mSystemProperties) {
@@ -1162,6 +1174,207 @@ public class ThemeOverlayControllerTest extends SysuiTestCase {
                         + DynamicColors.getFixedColorsMapped().size()
                         + DynamicColors.getCustomColorsMapped().size() * 2)
         ).setResourceValue(any(String.class), eq(TYPE_INT_COLOR_ARGB8), anyInt(), eq(null));
+    }
+
+    @Test
+    public void customTheme_generatesAllCustomPaletteResources() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        WallpaperColors colors = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+
+        mColorsListener.getValue().onColorsChanged(
+                colors, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+
+        ArgumentCaptor<FabricatedOverlay[]> overlays =
+                ArgumentCaptor.forClass(FabricatedOverlay[].class);
+        verify(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), overlays.capture(), anyInt(), any(), any());
+        verify(overlays.getValue()[0], times(
+                (DynamicColors.getAllAccentPalette().size()
+                        + DynamicColors.getAllErrorPalette().size()) * 2))
+                .setResourceValue(any(String.class), eq(TYPE_INT_COLOR_ARGB8), anyInt(), eq(null));
+        verify(overlays.getValue()[1], times(DynamicColors.getAllNeutralPalette().size() * 2))
+                .setResourceValue(any(String.class), eq(TYPE_INT_COLOR_ARGB8), anyInt(), eq(null));
+        verify(overlays.getValue()[0]).setResourceValue(
+                eq("android:color/system_accent1_500_light"),
+                eq(TYPE_INT_COLOR_ARGB8),
+                anyInt(),
+                eq(null));
+        verify(overlays.getValue()[0]).setResourceValue(
+                eq("android:color/system_accent1_500_dark"),
+                eq(TYPE_INT_COLOR_ARGB8),
+                anyInt(),
+                eq(null));
+    }
+
+    @Test
+    public void wallpaperChanged_customTheme_doesNotRewriteSetting() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        WallpaperColors first = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+        WallpaperColors second = new WallpaperColors(Color.valueOf(Color.BLUE), null, null);
+
+        mColorsListener.getValue().onColorsChanged(
+                first, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+        clearInvocations(mSecureSettings);
+        mColorsListener.getValue().onColorsChanged(
+                second, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+
+        verify(mSecureSettings, never()).putStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), any(), anyInt());
+        assertThat(mThemeOverlayController.mCurrentColors.get(USER_SYSTEM)).isEqualTo(second);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void invalidLiveCustomUpdate_keepsCurrentOverlays() {
+        doAnswer(invocation -> {
+            Consumer<ThemeOverlayApplier.ApplyResult> callback = invocation.getArgument(4);
+            callback.accept(ThemeOverlayApplier.ApplyResult.SUCCESS);
+            return null;
+        }).when(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), anyInt(), any(), any());
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        WallpaperColors colors = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+        mColorsListener.getValue().onColorsChanged(
+                colors, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+        clearInvocations(mThemeOverlayApplier);
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        when(mDeviceProvisionedController.isUserSetup(USER_SYSTEM)).thenReturn(true);
+
+        mSettingsObserver.getValue().onChange(false, List.of(), 0, USER_SYSTEM);
+
+        verify(mThemeOverlayApplier, never())
+                .applyCurrentUserOverlays(any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    public void invalidInitialCustomTheme_fallsBackToWallpaper() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        WallpaperColors colors = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+
+        mColorsListener.getValue().onColorsChanged(
+                colors, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+
+        verify(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), anyInt(), any(), any());
+        assertThat(mThemeOverlayController.mColorScheme.getSeed()).isEqualTo(Color.RED);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void invalidInitialCustomTheme_afterUserSwitch_fallsBackForNewUser() {
+        when(mUserTracker.getUserId()).thenReturn(USER_SYSTEM);
+        doAnswer(invocation -> {
+            Consumer<ThemeOverlayApplier.ApplyResult> callback = invocation.getArgument(4);
+            callback.accept(ThemeOverlayApplier.ApplyResult.SUCCESS);
+            return null;
+        }).when(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), anyInt(), any(), any());
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        clearInvocations(mThemeOverlayApplier);
+
+        when(mUserTracker.getUserId()).thenReturn(USER_SECONDARY);
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.BLUE), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SECONDARY);
+
+        verify(mThemeOverlayApplier)
+                .applyCurrentUserOverlays(any(), any(), eq(USER_SECONDARY), any(), any());
+    }
+
+    @Test
+    public void unknownColorSource_isBoundedBeforeLoggingAndDump() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn("{\"android.theme.customization.color_source\":\"untrusted-source\"}");
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        verify(mLogger).logSourceSelected("unknown");
+        assertThat(output.toString()).contains("colorSource=unknown");
+        assertThat(output.toString()).doesNotContain("untrusted-source");
+    }
+
+    @Test
+    public void dump_validCustomTheme_excludesUuidAndSeedValues() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(customThemeJson());
+        mColorsListener.getValue().onColorsChanged(
+                new WallpaperColors(Color.valueOf(Color.RED), null, null),
+                WallpaperManager.FLAG_SYSTEM,
+                USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        assertThat(output.toString()).doesNotContain("11111111-1111-4111-8111-111111111111");
+        assertThat(output.toString()).doesNotContain("B69CFF");
+        assertThat(output.toString()).doesNotContain("75D5C7");
+        assertThat(output.toString()).doesNotContain("ffff0000");
+        assertThat(output.toString()).doesNotContain("WallpaperColors");
+    }
+
+    @Test
+    public void dump_invalidCustomTheme_containsDecisionKeysAndReason() {
+        when(mSecureSettings.getStringForUser(
+                eq(Settings.Secure.THEME_CUSTOMIZATION_OVERLAY_PACKAGES), anyInt()))
+                .thenReturn(unsupportedCustomThemeJson());
+        WallpaperColors colors = new WallpaperColors(Color.valueOf(Color.RED), null, null);
+        mColorsListener.getValue().onColorsChanged(
+                colors, WallpaperManager.FLAG_SYSTEM, USER_SYSTEM);
+        StringWriter output = new StringWriter();
+
+        mThemeOverlayController.dump(new PrintWriter(output), new String[0]);
+
+        assertThat(output.toString()).contains("colorSource=custom_theme");
+        assertThat(output.toString()).contains("customSchemaVersion=2");
+        assertThat(output.toString()).contains("customValidation=UNSUPPORTED_VERSION");
+        assertThat(output.toString()).contains("customRejectionReason=version");
+        assertThat(output.toString()).contains("customGeneration=not_started");
+        assertThat(output.toString()).contains("customApply=not_started");
+        assertThat(output.toString()).contains("hasSuccessfulApply=false");
+    }
+
+    private String customThemeJson() {
+        CustomThemeSeeds light =
+                new CustomThemeSeeds(0xFFB69CFF, 0xFF75D5C7, 0xFFFF91B8, 0xFF8C8791);
+        CustomThemeContract.ActiveTheme theme =
+                new CustomThemeContract.ActiveTheme(
+                        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                        ThemeStyle.VIBRANT,
+                        false,
+                        light,
+                        null);
+        return CustomThemeContract.serialize(theme, new org.json.JSONObject()).toString();
+    }
+
+    private String unsupportedCustomThemeJson() {
+        return customThemeJson().replace("\"version\":1", "\"version\":2");
     }
 
     private enum TestColorSource {

@@ -28,6 +28,7 @@ import android.util.Log;
 import android.util.Pair;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.systemui.Dumpable;
@@ -46,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
@@ -189,6 +191,11 @@ public class ThemeOverlayApplier implements Dumpable {
         dumpManager.registerDumpable(TAG, this);
     }
 
+    public enum ApplyResult {
+        SUCCESS,
+        COMMIT_FAILED
+    }
+
     /**
      * Apply the set of overlay packages to the set of {@code UserHandle}s provided. Overlays that
      * affect sysui will also be applied to the system user.
@@ -197,108 +204,113 @@ public class ThemeOverlayApplier implements Dumpable {
      * @param pendingCreation Overlays yet to be created
      * @param currentUser Current User ID
      * @param managedProfiles Profiles get overlays
-     * @param onComplete Callback for when resources are ready. Runs in the main thread.
+     * @param onComplete Callback for the terminal commit result. Runs on the main thread.
      */
     public void applyCurrentUserOverlays(
             Map<String, OverlayIdentifier> categoryToPackage,
-            FabricatedOverlay[] pendingCreation,
+            @Nullable FabricatedOverlay[] pendingCreation,
             int currentUser,
             Set<UserHandle> managedProfiles,
-            Runnable onComplete
-    ) {
-
+            @Nullable Consumer<ApplyResult> onComplete) {
         mBgExecutor.execute(() -> {
-            boolean isBlackMode = false;
-
-            // Disable all overlays that have not been specified in the user setting.
-            final Set<String> overlayCategoriesToDisable = new HashSet<>(THEME_CATEGORIES);
-            final Set<String> targetPackagesToQuery = overlayCategoriesToDisable.stream()
-                    .map(category -> mCategoryToTargetPackage.get(category))
-                    .collect(Collectors.toSet());
-            final List<OverlayInfo> overlays = new ArrayList<>();
-            targetPackagesToQuery.forEach(targetPackage -> overlays.addAll(mOverlayManager
-                    .getOverlayInfosForTarget(targetPackage, UserHandle.SYSTEM)));
-            final List<Pair<String, String>> overlaysToDisable = overlays.stream()
-                    .filter(o ->
-                            mTargetPackageToCategories.get(o.targetPackageName).contains(
-                                    o.category))
-                    .filter(o -> overlayCategoriesToDisable.contains(o.category))
-                    .filter(o -> !categoryToPackage.containsValue(
-                            new OverlayIdentifier(o.packageName)))
-                    .filter(o -> o.isEnabled())
-                    .map(o -> new Pair<>(o.category, o.packageName))
-                    .collect(Collectors.toList());
-
-            OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
-            HashSet<OverlayIdentifier> identifiersPending = new HashSet<>();
-            if (pendingCreation != null) {
-                isBlackMode = pendingCreation.length == 2;
-                for (FabricatedOverlay overlay : pendingCreation) {
-                    identifiersPending.add(overlay.getIdentifier());
-                    transaction.registerFabricatedOverlay(overlay);
-                }
+            ApplyResult result = applyOverlays(
+                    categoryToPackage, pendingCreation, currentUser, managedProfiles);
+            if (onComplete != null) {
+                mMainExecutor.execute(() -> onComplete.accept(result));
             }
-
-            for (Pair<String, String> packageToDisable : overlaysToDisable) {
-                OverlayIdentifier overlayInfo = new OverlayIdentifier(packageToDisable.second);
-                setEnabled(transaction, overlayInfo, packageToDisable.first, currentUser,
-                        managedProfiles, false, identifiersPending.contains(overlayInfo));
-            }
-
-            for (String category : THEME_CATEGORIES) {
-                if (categoryToPackage.containsKey(category)) {
-                    OverlayIdentifier overlayInfo = categoryToPackage.get(category);
-                    setEnabled(transaction, overlayInfo, category, currentUser, managedProfiles,
-                            true, identifiersPending.contains(overlayInfo));
-                }
-            }
-
-            try {
-                mOverlayManager.commit(transaction.build());
-                if (onComplete != null) {
-                    Log.d(TAG, "Executing onComplete runnable");
-                    mMainExecutor.execute(onComplete);
-                }
-            } catch (SecurityException | IllegalStateException e) {
-                Log.e(TAG, "setEnabled failed", e);
-            }
-
-            checkDarkUserOverlays(currentUser, onComplete, isBlackMode);
         });
     }
 
-    private void checkDarkUserOverlays(int currentUser, Runnable onComplete, boolean isBlackMode) {
-        OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
+    private ApplyResult applyOverlays(
+            Map<String, OverlayIdentifier> categoryToPackage,
+            @Nullable FabricatedOverlay[] pendingCreation,
+            int currentUser,
+            Set<UserHandle> managedProfiles) {
         try {
-            transaction.setEnabled(getOverlayID(OVERLAY_BLACK_THEME), isBlackMode, currentUser);
-            transaction.setEnabled(getOverlayID("android:neutral"), !isBlackMode, currentUser);
+            OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
+            Set<OverlayIdentifier> pending = registerPending(transaction, pendingCreation);
+            disableUnselected(transaction, categoryToPackage, currentUser, managedProfiles, pending);
+            enableSelected(transaction, categoryToPackage, currentUser, managedProfiles, pending);
+            setDarkModeOverlays(transaction, currentUser, pendingCreation);
             mOverlayManager.commit(transaction.build());
-            if (onComplete != null) {
-                Log.d(TAG, "Executing onComplete runnable");
-                mMainExecutor.execute(onComplete);
-            }
-        } catch (SecurityException | IllegalStateException e) {
-            Log.e(TAG, "setEnabled failed", e);
+            return ApplyResult.SUCCESS;
+        } catch (SecurityException | IllegalStateException exception) {
+            Log.e(TAG, "setEnabled failed", exception);
+            return ApplyResult.COMMIT_FAILED;
         }
     }
 
-    private OverlayIdentifier getOverlayID(String name) throws IllegalStateException {
-        if (name.contains(":")) {
-            final String[] value = name.split(":");
-            final String pkgName = value[0];
-            final String overlayName = value[1];
-            final List<OverlayInfo> infos =
-                    mOverlayManager.getOverlayInfosForTarget(pkgName, UserHandle.CURRENT);
-            for (OverlayInfo info : infos) {
-                if (overlayName.equals(info.getOverlayName()))
-                    return info.getOverlayIdentifier();
-            }
-            throw new IllegalStateException("No overlay found for " + name);
+    private Set<OverlayIdentifier> registerPending(
+            OverlayManagerTransaction.Builder transaction,
+            @Nullable FabricatedOverlay[] pendingCreation) {
+        Set<OverlayIdentifier> identifiers = new HashSet<>();
+        if (pendingCreation == null) {
+            return identifiers;
         }
-        OverlayInfo overlayInfo = mOverlayManager.getOverlayInfo(name, UserHandle.CURRENT);
-        if (overlayInfo != null)
-            return overlayInfo.getOverlayIdentifier();
-        throw new IllegalStateException("No overlay found for " + name);
+        for (FabricatedOverlay overlay : pendingCreation) {
+            identifiers.add(overlay.getIdentifier());
+            transaction.registerFabricatedOverlay(overlay);
+        }
+        return identifiers;
+    }
+
+    private void disableUnselected(
+            OverlayManagerTransaction.Builder transaction,
+            Map<String, OverlayIdentifier> categoryToPackage,
+            int currentUser,
+            Set<UserHandle> managedProfiles,
+            Set<OverlayIdentifier> pending) {
+        for (Pair<String, String> overlay : getOverlaysToDisable(categoryToPackage)) {
+            OverlayIdentifier identifier = new OverlayIdentifier(overlay.second);
+            setEnabled(transaction, identifier, overlay.first, currentUser, managedProfiles,
+                    false, pending.contains(identifier));
+        }
+    }
+
+    private List<Pair<String, String>> getOverlaysToDisable(
+            Map<String, OverlayIdentifier> categoryToPackage) {
+        Set<String> targetPackages = THEME_CATEGORIES.stream()
+                .map(mCategoryToTargetPackage::get)
+                .collect(Collectors.toSet());
+        List<OverlayInfo> overlays = new ArrayList<>();
+        targetPackages.forEach(target -> overlays.addAll(
+                mOverlayManager.getOverlayInfosForTarget(target, UserHandle.SYSTEM)));
+        return overlays.stream()
+                .filter(overlay -> mTargetPackageToCategories.get(overlay.targetPackageName)
+                        .contains(overlay.category))
+                .filter(overlay -> THEME_CATEGORIES.contains(overlay.category))
+                .filter(overlay -> !categoryToPackage.containsValue(
+                        new OverlayIdentifier(overlay.packageName)))
+                .filter(OverlayInfo::isEnabled)
+                .map(overlay -> new Pair<>(overlay.category, overlay.packageName))
+                .collect(Collectors.toList());
+    }
+
+    private void enableSelected(
+            OverlayManagerTransaction.Builder transaction,
+            Map<String, OverlayIdentifier> categoryToPackage,
+            int currentUser,
+            Set<UserHandle> managedProfiles,
+            Set<OverlayIdentifier> pending) {
+        for (String category : THEME_CATEGORIES) {
+            OverlayIdentifier identifier = categoryToPackage.get(category);
+            if (identifier == null) {
+                continue;
+            }
+            setEnabled(transaction, identifier, category, currentUser, managedProfiles,
+                    true, pending.contains(identifier));
+        }
+    }
+
+    private void setDarkModeOverlays(
+            OverlayManagerTransaction.Builder transaction,
+            int currentUser,
+            @Nullable FabricatedOverlay[] pendingCreation) {
+        boolean isBlackMode = pendingCreation != null && pendingCreation.length == 2;
+        transaction.setEnabled(
+                new OverlayIdentifier(OVERLAY_BLACK_THEME), isBlackMode, currentUser);
+        transaction.setEnabled(
+                new OverlayIdentifier(SYSUI_PACKAGE, "neutral"), !isBlackMode, currentUser);
     }
 
     @VisibleForTesting

@@ -12802,6 +12802,14 @@ public final class Settings {
                 "theme_customization_overlay_packages";
 
         /**
+         * Per-user versioned JSON containing ThemePicker named custom themes.
+         *
+         * @hide
+         */
+        public static final String THEME_CUSTOMIZATION_SAVED_THEMES =
+                "theme_customization_saved_themes";
+
+        /**
          * Indicates whether the nav bar is forced to always be visible, even in immersive mode.
          * <p>Type: int (0 for false, 1 for true)
          *

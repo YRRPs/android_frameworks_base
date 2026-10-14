@@ -670,6 +670,14 @@ public abstract class LogModule {
         return factory.create("RearDisplayLog", 50);
     }
 
+    /** Provides a {@link LogBuffer} for theme source and application decisions. */
+    @Provides
+    @SysUISingleton
+    @ThemeOverlayControllerLog
+    public static LogBuffer provideThemeOverlayControllerLogBuffer(LogBufferFactory factory) {
+        return factory.create("ThemeOverlayControllerLog", 100);
+    }
+
     /** Provides a {@link LogBuffer} for Pulse eligibility and lifecycle transitions. */
     @Provides
     @SysUISingleton
