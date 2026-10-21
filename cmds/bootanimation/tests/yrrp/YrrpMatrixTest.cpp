@@ -69,6 +69,25 @@ TEST(YrrpMatrixConfigTest, names) {
     EXPECT_STREQ("EXIT", routeName(MatrixRoute::Exit));
 }
 
+TEST(YrrpMatrixConfigTest, xpStyleComesFromTheProperty) {
+    const MatrixConfig config = parseMatrixConfig("xp", "");
+    EXPECT_EQ(MatrixStyle::Xp, config.style);
+    EXPECT_TRUE(config.styleFromProp);
+    for (const char* value : {"XP", " xp", "xp ", "windows"}) {
+        EXPECT_EQ(MatrixStyle::Matrix, parseMatrixConfig(value, "").style) << value;
+    }
+}
+
+TEST(YrrpMatrixConfigTest, xpRoutesToXpOnBootAndShutdown) {
+    EXPECT_EQ(MatrixRoute::Xp, routeFor(MatrixStyle::Xp, false));
+    EXPECT_EQ(MatrixRoute::Xp, routeFor(MatrixStyle::Xp, true));
+}
+
+TEST(YrrpMatrixConfigTest, xpNames) {
+    EXPECT_STREQ("xp", styleName(MatrixStyle::Xp));
+    EXPECT_STREQ("XP", routeName(MatrixRoute::Xp));
+}
+
 }  // namespace
 }  // namespace android::yrrp
 
