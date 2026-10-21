@@ -68,6 +68,9 @@ bool BootAnimation::playYrrpBootAnimation() {
     status.shuttingDown = mShuttingDown;
     status.route = yrrp::routeFor(status.config.style, mShuttingDown);
     ALOGI("config %s", yrrp::configValue(status).c_str());
+    if (status.route == yrrp::MatrixRoute::Xp) {
+        return playYrrpXp(&status);
+    }
     if (status.route != yrrp::MatrixRoute::Matrix) {
         status.blockedBy = "STYLE_LINEAGE";
         publishYrrpStatus(status);

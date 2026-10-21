@@ -85,10 +85,13 @@ cc_library_shared {
         "BootAnimation.cpp",
         // YRRP Matrix and XP boot animations
         "BootAnimationYrrp.cpp",
+        "BootAnimationXp.cpp",
         "YrrpGlProgram.cpp",
         "YrrpMatrixConfig.cpp",
         "YrrpMatrixStatus.cpp",
         "YrrpMatrixTimeline.cpp",
+        "YrrpXpLayout.cpp",
+        "YrrpXpTimeline.cpp",
     ],
 
     shared_libs: [
@@ -100,7 +103,7 @@ cc_library_shared {
     ],
 }
 
-// YRRP Matrix pure units (config, route, timeline, status); host and device.
+// YRRP Matrix and XP pure units (config, route, timelines, status, layout); host and device.
 cc_test {
     name: "bootanimation_yrrp_matrix_tests",
     host_supported: true,
@@ -108,7 +111,10 @@ cc_test {
         "YrrpMatrixConfig.cpp",
         "YrrpMatrixStatus.cpp",
         "YrrpMatrixTimeline.cpp",
+        "YrrpXpLayout.cpp",
+        "YrrpXpTimeline.cpp",
         "tests/yrrp/YrrpMatrixTest.cpp",
+        "tests/yrrp/YrrpXpTest.cpp",
     ],
     cflags: [
         "-Wall",
