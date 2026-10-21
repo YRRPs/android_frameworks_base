@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "YrrpXpLayout.h"
+#include "YrrpXpTimeline.h"
 
 namespace android::yrrp {
 namespace {
@@ -121,6 +122,52 @@ TEST(YrrpXpQuadTest, topLeftPixelRectMapsToClipAndTexture) {
     EXPECT_FLOAT_EQ(0.2f, quad.dst[3]);
     EXPECT_FLOAT_EQ(0.1f, quad.src[2]);
     EXPECT_FLOAT_EQ(0.1f, quad.src[3]);
+}
+
+constexpr int64_t kMs = 1000000;
+
+TEST(YrrpXpTimelineTest, stepIsEightyMillisecondTicksModuloEighteen) {
+    const XpTimeline timeline(/*shuttingDown=*/false);
+    EXPECT_EQ(0, timeline.stepAt(0));
+    EXPECT_EQ(0, timeline.stepAt(79 * kMs));
+    EXPECT_EQ(1, timeline.stepAt(80 * kMs));
+    EXPECT_EQ(17, timeline.stepAt(1439 * kMs));
+    EXPECT_EQ(0, timeline.stepAt(1440 * kMs));
+    EXPECT_EQ(0, timeline.stepAt(-5 * kMs));
+}
+
+TEST(YrrpXpTimelineTest, bootDrawsOncePerTickAndAfterAStall) {
+    XpTimeline timeline(false);
+    EXPECT_TRUE(timeline.needsDraw(0));
+    EXPECT_FALSE(timeline.needsDraw(16 * kMs));
+    EXPECT_FALSE(timeline.needsDraw(79 * kMs));
+    EXPECT_TRUE(timeline.needsDraw(80 * kMs));
+    EXPECT_TRUE(timeline.needsDraw(900 * kMs));  // stall: jump straight to the current step
+    EXPECT_FALSE(timeline.needsDraw(950 * kMs));
+}
+
+TEST(YrrpXpTimelineTest, shutdownDrawsOnlyOnce) {
+    XpTimeline timeline(true);
+    EXPECT_TRUE(timeline.needsDraw(0));
+    EXPECT_FALSE(timeline.needsDraw(80 * kMs));
+    EXPECT_FALSE(timeline.needsDraw(60000 * kMs));
+}
+
+TEST(YrrpXpTimelineTest, bootWakesAtTheNextTickOrPollWhicheverIsFirst) {
+    const XpTimeline timeline(false);
+    EXPECT_EQ(XpTimeline::kPollNs, timeline.nextWakeNs(0));
+    EXPECT_EQ(80 * kMs, timeline.nextWakeNs(70 * kMs));
+    EXPECT_EQ(160 * kMs, timeline.nextWakeNs(150 * kMs));
+}
+
+TEST(YrrpXpTimelineTest, shutdownOnlyPolls) {
+    const XpTimeline timeline(true);
+    EXPECT_EQ(70 * kMs + XpTimeline::kPollNs, timeline.nextWakeNs(70 * kMs));
+}
+
+TEST(YrrpXpTimelineTest, exitOutcome) {
+    EXPECT_STREQ("COMPLETED", XpTimeline(false).exitOutcome());
+    EXPECT_STREQ("EXIT_PENDING", XpTimeline(true).exitOutcome());
 }
 
 }  // namespace
