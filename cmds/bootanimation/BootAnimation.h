@@ -202,6 +202,9 @@ private:
     // animation); false continues with the stock zip or logo path.
     struct YrrpMatrixGl;
     bool playYrrpBootAnimation();
+    static void publishYrrpStatus(const yrrp::MatrixStatus& status);
+    // Sleeps until a CLOCK_MONOTONIC time; a stall is kept, never caught up.
+    static void sleepUntilYrrp(nsecs_t target);
     const char* initYrrpMatrix(YrrpMatrixGl* gl);
     void releaseYrrpMatrix(YrrpMatrixGl* gl);
     void runYrrpMatrix(const YrrpMatrixGl& gl, yrrp::MatrixStatus* status);

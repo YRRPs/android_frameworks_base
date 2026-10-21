@@ -83,8 +83,9 @@ cc_library_shared {
 
     srcs: [
         "BootAnimation.cpp",
-        // YRRP Matrix boot animation
+        // YRRP Matrix and XP boot animations
         "BootAnimationYrrp.cpp",
+        "YrrpGlProgram.cpp",
         "YrrpMatrixConfig.cpp",
         "YrrpMatrixStatus.cpp",
         "YrrpMatrixTimeline.cpp",

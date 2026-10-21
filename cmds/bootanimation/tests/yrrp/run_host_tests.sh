@@ -30,4 +30,9 @@ if [[ -f "${src}/YrrpMatrixShader.h" ]]; then
     glslangValidator "${out}/matrix.vert"
     glslangValidator "${out}/matrix.frag"
 fi
+g++ -std=c++17 -Wall -Werror -I"${src}" "${here}/dump_xp_shader.cpp" -o "${out}/dump_xp"
+"${out}/dump_xp" vert > "${out}/xp.vert"
+"${out}/dump_xp" frag > "${out}/xp.frag"
+glslangValidator "${out}/xp.vert"
+glslangValidator "${out}/xp.frag"
 echo "yrrp bootanimation host checks passed"
