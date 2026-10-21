@@ -88,6 +88,21 @@ TEST(YrrpMatrixConfigTest, xpNames) {
     EXPECT_STREQ("XP", routeName(MatrixRoute::Xp));
 }
 
+TEST(YrrpShutdownSignalTest, bootHasNeitherSignal) {
+    EXPECT_FALSE(isShuttingDown("", ""));
+}
+
+// Lineage 23.2 init never stores sys.powerctl, so a power-menu shutdown or
+// reboot is visible to bootanimation only through sys.shutdown.requested.
+TEST(YrrpShutdownSignalTest, shutdownRequestedAloneMeansShuttingDown) {
+    EXPECT_TRUE(isShuttingDown("", "0userrequested"));
+    EXPECT_TRUE(isShuttingDown("", "1"));
+}
+
+TEST(YrrpShutdownSignalTest, powerCtlStillMeansShuttingDown) {
+    EXPECT_TRUE(isShuttingDown("reboot,userrequested", ""));
+}
+
 }  // namespace
 }  // namespace android::yrrp
 

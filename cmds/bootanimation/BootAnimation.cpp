@@ -60,6 +60,7 @@
 #include <EGL/eglext.h>
 
 #include "BootAnimation.h"
+#include "YrrpMatrixConfig.h"
 
 #include <com_android_graphics_bootanimation_flags.h>
 
@@ -208,12 +209,11 @@ BootAnimation::BootAnimation(sp<Callbacks> callbacks)
     ATRACE_CALL();
     mSession = sp<SurfaceComposerClient>::make();
 
-    std::string powerCtl = android::base::GetProperty("sys.powerctl", "");
-    if (powerCtl.empty()) {
-        mShuttingDown = false;
-    } else {
-        mShuttingDown = true;
-    }
+    // YRRP: Lineage 23.2 init never stores sys.powerctl, so a power-menu shutdown
+    // or reboot is only visible through sys.shutdown.requested.
+    mShuttingDown = yrrp::isShuttingDown(
+            android::base::GetProperty(yrrp::kPowerCtlProp, ""),
+            android::base::GetProperty(yrrp::kShutdownRequestedProp, ""));
     ALOGD("%sAnimationStartTiming start time: %" PRId64 "ms", mShuttingDown ? "Shutdown" : "Boot",
             elapsedRealtime());
 }

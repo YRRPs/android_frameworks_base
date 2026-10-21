@@ -32,6 +32,16 @@ struct MatrixConfig {
 // default. "false"/"0" and "true"/"1" set full intro; anything else is true.
 MatrixConfig parseMatrixConfig(const std::string& style, const std::string& fullIntro);
 
+// Shutdown signals: system_server's ShutdownThread sets sys.shutdown.requested
+// before a power-menu shutdown or reboot. Lineage 23.2 init does not store
+// sys.powerctl in the property area, so it reads empty in practice; it is
+// still honoured.
+inline constexpr char kPowerCtlProp[] = "sys.powerctl";
+inline constexpr char kShutdownRequestedProp[] = "sys.shutdown.requested";
+
+// True when either signal is non-empty.
+bool isShuttingDown(const std::string& powerCtl, const std::string& shutdownRequested);
+
 MatrixRoute routeFor(MatrixStyle style, bool shuttingDown);
 MatrixRoute routeAfterInitFailure(bool shuttingDown);
 

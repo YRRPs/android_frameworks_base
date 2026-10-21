@@ -27,6 +27,10 @@ MatrixConfig parseMatrixConfig(const std::string& style, const std::string& full
     return config;
 }
 
+bool isShuttingDown(const std::string& powerCtl, const std::string& shutdownRequested) {
+    return !powerCtl.empty() || !shutdownRequested.empty();
+}
+
 MatrixRoute routeFor(MatrixStyle style, bool shuttingDown) {
     switch (style) {
         case MatrixStyle::Matrix:
