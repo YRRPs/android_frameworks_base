@@ -35,7 +35,8 @@ std::vector<std::pair<std::string, std::string>> statusProperties(const MatrixSt
             {"sys.yrrp.bootanim.route", routeName(status.route)},
             {"sys.yrrp.bootanim.blocked_by", status.blockedBy},
     };
-    if (status.route == MatrixRoute::Matrix && !status.outcome.empty()) {
+    const bool rendered = status.route == MatrixRoute::Matrix || status.route == MatrixRoute::Xp;
+    if (rendered && !status.outcome.empty()) {
         properties.emplace_back("sys.yrrp.bootanim.result", resultValue(status));
     }
     return properties;

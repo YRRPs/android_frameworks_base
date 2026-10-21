@@ -69,6 +69,25 @@ TEST(YrrpMatrixConfigTest, names) {
     EXPECT_STREQ("EXIT", routeName(MatrixRoute::Exit));
 }
 
+TEST(YrrpMatrixConfigTest, xpStyleComesFromTheProperty) {
+    const MatrixConfig config = parseMatrixConfig("xp", "");
+    EXPECT_EQ(MatrixStyle::Xp, config.style);
+    EXPECT_TRUE(config.styleFromProp);
+    for (const char* value : {"XP", " xp", "xp ", "windows"}) {
+        EXPECT_EQ(MatrixStyle::Matrix, parseMatrixConfig(value, "").style) << value;
+    }
+}
+
+TEST(YrrpMatrixConfigTest, xpRoutesToXpOnBootAndShutdown) {
+    EXPECT_EQ(MatrixRoute::Xp, routeFor(MatrixStyle::Xp, false));
+    EXPECT_EQ(MatrixRoute::Xp, routeFor(MatrixStyle::Xp, true));
+}
+
+TEST(YrrpMatrixConfigTest, xpNames) {
+    EXPECT_STREQ("xp", styleName(MatrixStyle::Xp));
+    EXPECT_STREQ("XP", routeName(MatrixRoute::Xp));
+}
+
 }  // namespace
 }  // namespace android::yrrp
 
@@ -221,7 +240,30 @@ TEST(YrrpMatrixStatusTest, everyValueFitsAPropertyValue) {
     }
 }
 
-TEST(YrrpMatrixStatusTest, resultIsOnlyPublishedForMatrixRuns) {
+TEST(YrrpMatrixStatusTest, xpRunPublishesRouteConfigAndResult) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("xp", "");
+    status.route = MatrixRoute::Xp;
+    status.outcome = "COMPLETED";
+    status.frames = 150;
+    status.averageFrameMs = 80.04;
+    status.maxFrameMs = 412.26;
+    const auto map = asMap(status);
+    EXPECT_EQ("style=xp/prop fullIntro=1/default shutdown=0", map.at("sys.yrrp.bootanim.config"));
+    EXPECT_EQ("XP", map.at("sys.yrrp.bootanim.route"));
+    EXPECT_EQ("outcome=COMPLETED frames=150 avgMs=80.0 maxMs=412.3",
+              map.at("sys.yrrp.bootanim.result"));
+}
+
+TEST(YrrpMatrixStatusTest, xpAssetFailureNamesTheAsset) {
+    MatrixStatus status;
+    status.config = parseMatrixConfig("xp", "");
+    status.route = MatrixRoute::Stock;
+    status.blockedBy = "ASSET_XP_BOOT";
+    EXPECT_EQ("ASSET_XP_BOOT", asMap(status).at("sys.yrrp.bootanim.blocked_by"));
+}
+
+TEST(YrrpMatrixStatusTest, resultIsNotPublishedForStockOrExit) {
     for (const MatrixRoute route : {MatrixRoute::Stock, MatrixRoute::Exit}) {
         MatrixStatus status;
         status.route = route;

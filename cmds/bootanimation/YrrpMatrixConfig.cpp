@@ -12,6 +12,9 @@ MatrixConfig parseMatrixConfig(const std::string& style, const std::string& full
     if (style == "lineage") {
         config.style = MatrixStyle::Lineage;
         config.styleFromProp = true;
+    } else if (style == "xp") {
+        config.style = MatrixStyle::Xp;
+        config.styleFromProp = true;
     } else if (style == "matrix") {
         config.styleFromProp = true;
     }
@@ -25,8 +28,13 @@ MatrixConfig parseMatrixConfig(const std::string& style, const std::string& full
 }
 
 MatrixRoute routeFor(MatrixStyle style, bool shuttingDown) {
-    if (style == MatrixStyle::Matrix) {
-        return MatrixRoute::Matrix;
+    switch (style) {
+        case MatrixStyle::Matrix:
+            return MatrixRoute::Matrix;
+        case MatrixStyle::Xp:
+            return MatrixRoute::Xp;
+        case MatrixStyle::Lineage:
+            break;
     }
     return routeAfterInitFailure(shuttingDown);
 }
@@ -38,7 +46,15 @@ MatrixRoute routeAfterInitFailure(bool shuttingDown) {
 }
 
 const char* styleName(MatrixStyle style) {
-    return style == MatrixStyle::Lineage ? "lineage" : "matrix";
+    switch (style) {
+        case MatrixStyle::Lineage:
+            return "lineage";
+        case MatrixStyle::Xp:
+            return "xp";
+        case MatrixStyle::Matrix:
+            break;
+    }
+    return "matrix";
 }
 
 const char* routeName(MatrixRoute route) {
@@ -47,6 +63,8 @@ const char* routeName(MatrixRoute route) {
             return "MATRIX";
         case MatrixRoute::Stock:
             return "STOCK";
+        case MatrixRoute::Xp:
+            return "XP";
         case MatrixRoute::Exit:
             return "EXIT";
     }

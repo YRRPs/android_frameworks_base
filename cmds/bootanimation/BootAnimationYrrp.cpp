@@ -13,6 +13,7 @@
 #include <utils/Timers.h>
 
 #include "BootAnimation.h"
+#include "YrrpGlProgram.h"
 #include "YrrpMatrixConfig.h"
 #include "YrrpMatrixShader.h"
 #include "YrrpMatrixStatus.h"
@@ -40,41 +41,25 @@ constexpr GLfloat kFullScreen[] = {-1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f};
 constexpr char kAtlasAsset[] = "images/yrrp-matrix-atlas.png";
 constexpr char kLogoAsset[] = "images/yrrp-matrix-logo.png";
 
-GLuint compile(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint ok = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (ok == GL_TRUE) {
-        return shader;
-    }
-    char infoLog[512] = {};
-    glGetShaderInfoLog(shader, sizeof(infoLog), nullptr, infoLog);
-    ALOGW("shader compile failed type=0x%x log=%s", type, infoLog);
-    glDeleteShader(shader);
-    return 0;
-}
-
 void useLinearFiltering(GLuint texture) {
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
-void publish(const yrrp::MatrixStatus& status) {
-    for (const auto& [key, value] : yrrp::statusProperties(status)) {
-        android::base::SetProperty(key, value);
-    }
-}
+} // namespace
 
-void sleepUntil(nsecs_t target) {
+void BootAnimation::sleepUntilYrrp(nsecs_t target) {
     timespec spec{static_cast<time_t>(target / 1000000000), static_cast<long>(target % 1000000000)};
     while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &spec, nullptr) == EINTR) {
     }
 }
 
-} // namespace
+void BootAnimation::publishYrrpStatus(const yrrp::MatrixStatus& status) {
+    for (const auto& [key, value] : yrrp::statusProperties(status)) {
+        android::base::SetProperty(key, value);
+    }
+}
 
 bool BootAnimation::playYrrpBootAnimation() {
     yrrp::MatrixStatus status;
@@ -83,9 +68,12 @@ bool BootAnimation::playYrrpBootAnimation() {
     status.shuttingDown = mShuttingDown;
     status.route = yrrp::routeFor(status.config.style, mShuttingDown);
     ALOGI("config %s", yrrp::configValue(status).c_str());
+    if (status.route == yrrp::MatrixRoute::Xp) {
+        return playYrrpXp(&status);
+    }
     if (status.route != yrrp::MatrixRoute::Matrix) {
         status.blockedBy = "STYLE_LINEAGE";
-        publish(status);
+        publishYrrpStatus(status);
         ALOGI("route=%s blockedBy=STYLE_LINEAGE", yrrp::routeName(status.route));
         return status.route == yrrp::MatrixRoute::Exit;
     }
@@ -95,7 +83,7 @@ bool BootAnimation::playYrrpBootAnimation() {
         releaseYrrpMatrix(&gl);
         status.route = yrrp::routeAfterInitFailure(mShuttingDown);
         status.blockedBy = failure;
-        publish(status);
+        publishYrrpStatus(status);
         ALOGW("init failed reason=%s fallback=%s", failure, yrrp::routeName(status.route));
         return status.route == yrrp::MatrixRoute::Exit;
     }
@@ -105,10 +93,10 @@ bool BootAnimation::playYrrpBootAnimation() {
         ALOGI("init ok panel=%dx%d displays=%zu", mDisplays.front().width, mDisplays.front().height,
               mDisplays.size());
     }
-    publish(status);
+    publishYrrpStatus(status);
     runYrrpMatrix(gl, &status);
     releaseYrrpMatrix(&gl);
-    publish(status);
+    publishYrrpStatus(status);
     return true;
 }
 
@@ -126,26 +114,11 @@ const char* BootAnimation::initYrrpMatrix(YrrpMatrixGl* gl) {
     useLinearFiltering(gl->atlas.name);
     useLinearFiltering(gl->logo.name);
 
-    const GLuint vertex = compile(GL_VERTEX_SHADER, yrrp::kMatrixVertexShader);
-    const GLuint fragment = compile(GL_FRAGMENT_SHADER, yrrp::kMatrixFragmentShader);
-    if (vertex == 0 || fragment == 0) {
-        glDeleteShader(vertex);
-        glDeleteShader(fragment);
-        return "COMPILE";
-    }
-    gl->program = glCreateProgram();
-    glAttachShader(gl->program, vertex);
-    glAttachShader(gl->program, fragment);
-    glLinkProgram(gl->program);
-    glDeleteShader(vertex);
-    glDeleteShader(fragment);
-    GLint linked = GL_FALSE;
-    glGetProgramiv(gl->program, GL_LINK_STATUS, &linked);
-    if (linked != GL_TRUE) {
-        char infoLog[512] = {};
-        glGetProgramInfoLog(gl->program, sizeof(infoLog), nullptr, infoLog);
-        ALOGW("program link failed log=%s", infoLog);
-        return "LINK";
+    const char* failure = nullptr;
+    gl->program = yrrp::linkProgram(yrrp::kMatrixVertexShader, yrrp::kMatrixFragmentShader,
+                                    &failure);
+    if (gl->program == 0) {
+        return failure;
     }
     gl->aPosition = glGetAttribLocation(gl->program, "aPosition");
     gl->uAtlas = glGetUniformLocation(gl->program, "u_atlas");
@@ -229,7 +202,7 @@ void BootAnimation::runYrrpMatrix(const YrrpMatrixGl& gl, yrrp::MatrixStatus* st
         const nsecs_t frameEnd = systemTime(SYSTEM_TIME_MONOTONIC);
         stats.add(static_cast<double>(frameEnd - lastFrameEnd) / 1e6);
         lastFrameEnd = frameEnd;
-        sleepUntil(now + kFrameNs);
+        sleepUntilYrrp(now + kFrameNs);
     }
 
     status->frames = stats.count();

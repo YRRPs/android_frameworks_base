@@ -19,9 +19,11 @@ struct MatrixStatus {
     MatrixConfig config;
     bool shuttingDown = false;
     MatrixRoute route = MatrixRoute::Matrix;
-    std::string blockedBy = "none";  // STYLE_LINEAGE, ASSET_ATLAS, ASSET_LOGO, COMPILE, LINK, GL
-    std::string outcome;             // COMPLETED, EXIT_PENDING, SWAP_FAILED; empty until the end
-    int frames = 0;
+    // STYLE_LINEAGE, ASSET_ATLAS, ASSET_LOGO, ASSET_XP_BOOT, ASSET_XP_BAR,
+    // ASSET_XP_SHUTDOWN, COMPILE, LINK, GL
+    std::string blockedBy = "none";
+    std::string outcome;  // COMPLETED, EXIT_PENDING, SWAP_FAILED; empty until the end
+    int frames = 0;       // frames drawn (an XP frame swaps every display once)
     double averageFrameMs = 0.0;
     double maxFrameMs = 0.0;
 };

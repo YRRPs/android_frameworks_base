@@ -202,9 +202,20 @@ private:
     // animation); false continues with the stock zip or logo path.
     struct YrrpMatrixGl;
     bool playYrrpBootAnimation();
+    static void publishYrrpStatus(const yrrp::MatrixStatus& status);
+    // Sleeps until a CLOCK_MONOTONIC time; a stall is kept, never caught up.
+    static void sleepUntilYrrp(nsecs_t target);
     const char* initYrrpMatrix(YrrpMatrixGl* gl);
     void releaseYrrpMatrix(YrrpMatrixGl* gl);
     void runYrrpMatrix(const YrrpMatrixGl& gl, yrrp::MatrixStatus* status);
+    // YRRP Windows XP boot animation, in BootAnimationXp.cpp. Same contract as
+    // playYrrpBootAnimation for the XP route.
+    struct YrrpXpGl;
+    bool playYrrpXp(yrrp::MatrixStatus* status);
+    const char* initYrrpXp(YrrpXpGl* gl);
+    void releaseYrrpXp(YrrpXpGl* gl);
+    void runYrrpXp(const YrrpXpGl& gl, yrrp::MatrixStatus* status);
+    bool drawYrrpXp(const YrrpXpGl& gl, int step);
     status_t initDisplaysAndSurfaces();
     bool movie();
     void drawText(const char* str, const Font& font, bool bold,
