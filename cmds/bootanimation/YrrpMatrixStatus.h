@@ -23,7 +23,7 @@ struct MatrixStatus {
     // ASSET_XP_SHUTDOWN, COMPILE, LINK, GL
     std::string blockedBy = "none";
     std::string outcome;  // COMPLETED, EXIT_PENDING, SWAP_FAILED; empty until the end
-    int frames = 0;       // Matrix: frames drawn; XP: swaps
+    int frames = 0;       // frames drawn (an XP frame swaps every display once)
     double averageFrameMs = 0.0;
     double maxFrameMs = 0.0;
 };

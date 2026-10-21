@@ -22,6 +22,8 @@ public:
     int stepAt(int64_t elapsedNs) const;
     // Boot: true once per 80 ms tick. Shutdown: true on the first call only.
     bool needsDraw(int64_t elapsedNs);
+    // The next needsDraw returns true, e.g. after a display surface was recreated.
+    void invalidate() { mLastDrawnTick = -1; }
     // Elapsed time to sleep until.
     int64_t nextWakeNs(int64_t elapsedNs) const;
     // Boot cuts to black and completes; shutdown stops at once.

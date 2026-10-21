@@ -153,6 +153,19 @@ TEST(YrrpXpTimelineTest, shutdownDrawsOnlyOnce) {
     EXPECT_FALSE(timeline.needsDraw(60000 * kMs));
 }
 
+TEST(YrrpXpTimelineTest, invalidateForcesARedrawOfTheCurrentFrame) {
+    XpTimeline shutdown(true);
+    EXPECT_TRUE(shutdown.needsDraw(0));
+    shutdown.invalidate();  // a display surface was recreated
+    EXPECT_TRUE(shutdown.needsDraw(5000 * kMs));
+    EXPECT_FALSE(shutdown.needsDraw(6000 * kMs));
+    XpTimeline boot(false);
+    EXPECT_TRUE(boot.needsDraw(10 * kMs));
+    boot.invalidate();
+    EXPECT_TRUE(boot.needsDraw(20 * kMs));
+    EXPECT_FALSE(boot.needsDraw(30 * kMs));
+}
+
 TEST(YrrpXpTimelineTest, bootWakesAtTheNextTickOrPollWhicheverIsFirst) {
     const XpTimeline timeline(false);
     EXPECT_EQ(XpTimeline::kPollNs, timeline.nextWakeNs(0));

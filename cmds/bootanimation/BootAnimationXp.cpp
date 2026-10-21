@@ -9,6 +9,8 @@
 #include <log/log.h>
 #include <utils/Timers.h>
 
+#include <vector>
+
 #include "BootAnimation.h"
 #include "YrrpGlProgram.h"
 #include "YrrpMatrixConfig.h"
@@ -38,6 +40,15 @@ constexpr char kBootAsset[] = "images/yrrp-xp-boot.png";
 constexpr char kBarAsset[] = "images/yrrp-xp-bar.png";
 constexpr char kShutdownAsset[] = "images/yrrp-xp-shutdown.png";
 constexpr int kBlackFrame = -1;  // drawYrrpXp step for an all-black frame
+
+template <typename Displays>
+std::vector<EGLSurface> surfacesOf(const Displays& displays) {
+    std::vector<EGLSurface> surfaces;
+    for (const auto& display : displays) {
+        surfaces.push_back(display.eglSurface);
+    }
+    return surfaces;
+}
 
 bool loaded(status_t result, const BootAnimation::Texture& texture) {
     return result == NO_ERROR && texture.w > 0 && texture.h > 0;
@@ -180,9 +191,14 @@ void BootAnimation::runYrrpXp(const YrrpXpGl& gl, yrrp::MatrixStatus* status) {
 
     const nsecs_t start = systemTime(SYSTEM_TIME_MONOTONIC);
     nsecs_t lastSwap = start;
+    std::vector<EGLSurface> drawnSurfaces;
     for (;;) {
         processDisplayEvents();
         checkExit();
+        // A resize recreates a display's surface; the static shutdown frame must be redrawn.
+        if (surfacesOf(mDisplays) != drawnSurfaces) {
+            timeline.invalidate();
+        }
         const nsecs_t elapsed = systemTime(SYSTEM_TIME_MONOTONIC) - start;
         if (exitPending()) {
             status->outcome = timeline.exitOutcome();
@@ -198,6 +214,7 @@ void BootAnimation::runYrrpXp(const YrrpXpGl& gl, yrrp::MatrixStatus* status) {
                 status->outcome = "SWAP_FAILED";
                 break;
             }
+            drawnSurfaces = surfacesOf(mDisplays);
             const nsecs_t swappedAt = systemTime(SYSTEM_TIME_MONOTONIC);
             stats.add(static_cast<double>(swappedAt - lastSwap) / 1e6);
             lastSwap = swappedAt;
