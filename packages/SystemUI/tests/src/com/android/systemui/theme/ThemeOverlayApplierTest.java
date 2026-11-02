@@ -16,6 +16,7 @@
 package com.android.systemui.theme;
 
 import static com.android.systemui.theme.ThemeOverlayApplier.ANDROID_PACKAGE;
+import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_BLACK_THEME;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_ACCENT_COLOR;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_DYNAMIC_COLOR;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_FONT;
@@ -32,6 +33,8 @@ import static com.android.systemui.theme.ThemeOverlayApplier.SYSUI_PACKAGE;
 import static com.android.systemui.theme.ThemeOverlayApplier.THEME_CATEGORIES;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.clearInvocations;
@@ -184,7 +187,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
     @Test
     public void allCategoriesSpecified_allEnabledExclusively() {
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, null);
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
         verify(mOverlayManager).commit(any());
 
         for (OverlayIdentifier overlayPackage : ALL_CATEGORIES_MAP.values()) {
@@ -196,7 +200,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
     @Test
     public void allCategoriesSpecified_sysuiCategoriesAlsoAppliedToSysuiUser() {
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, null);
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
 
         for (Map.Entry<String, OverlayIdentifier> entry : ALL_CATEGORIES_MAP.entrySet()) {
             if (SYSTEM_USER_CATEGORIES.contains(entry.getKey())) {
@@ -213,7 +218,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
     public void allCategoriesSpecified_enabledForAllUserHandles() {
         Set<UserHandle> userHandles = Sets.newHashSet(TEST_USER_HANDLES);
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                userHandles, null);
+                userHandles, null,
+                /* useBlackTheme= */ false);
 
         for (OverlayIdentifier overlayPackage : ALL_CATEGORIES_MAP.values()) {
             verify(mTransactionBuilder).setEnabled(eq(overlayPackage), eq(true),
@@ -230,7 +236,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
 
         Set<UserHandle> userHandles = Sets.newHashSet(TEST_USER_HANDLES);
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                userHandles, null);
+                userHandles, null,
+                /* useBlackTheme= */ false);
 
         for (OverlayIdentifier overlayPackage : ALL_CATEGORIES_MAP.values()) {
             verify(mTransactionBuilder, never()).setEnabled(eq(overlayPackage), eq(true),
@@ -244,7 +251,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
                 mock(FabricatedOverlay.class)
         };
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, pendingCreation,
-                TEST_USER.getIdentifier(), TEST_USER_HANDLES, null);
+                TEST_USER.getIdentifier(), TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
 
         for (FabricatedOverlay overlay : pendingCreation) {
             verify(mTransactionBuilder).registerFabricatedOverlay(eq(overlay));
@@ -258,7 +266,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
         categoryToPackage.remove(OVERLAY_CATEGORY_ICON_ANDROID);
 
         mManager.applyCurrentUserOverlays(categoryToPackage, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, null);
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
 
         for (OverlayIdentifier overlayPackage : categoryToPackage.values()) {
             verify(mTransactionBuilder).setEnabled(eq(overlayPackage), eq(true),
@@ -275,7 +284,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
     @Test
     public void zeroCategoriesSpecified_allDisabled() {
         mManager.applyCurrentUserOverlays(Maps.newArrayMap(), null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, null);
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
 
         for (String category : THEME_CATEGORIES) {
             verify(mTransactionBuilder).setEnabled(
@@ -290,7 +300,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
         categoryToPackage.put("blah.category", new OverlayIdentifier("com.example.blah.category"));
 
         mManager.applyCurrentUserOverlays(categoryToPackage, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, null);
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ false);
 
         verify(mTransactionBuilder, never()).setEnabled(
                 eq(new OverlayIdentifier("com.example.blah.category")), eq(false),
@@ -305,13 +316,18 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
         List<ThemeOverlayApplier.ApplyResult> results = new ArrayList<>();
 
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, results::add);
+                TEST_USER_HANDLES, results::add,
+                /* useBlackTheme= */ false);
 
         assertEquals(List.of(ThemeOverlayApplier.ApplyResult.SUCCESS), results);
         verify(mTransactionBuilder).setEnabled(
-                eq(new OverlayIdentifier(SYSUI_PACKAGE, "neutral")),
-                eq(true),
+                eq(new OverlayIdentifier(OVERLAY_BLACK_THEME)),
+                eq(false),
                 eq(TEST_USER.getIdentifier()));
+        verify(mTransactionBuilder, never()).setEnabled(
+                eq(new OverlayIdentifier(SYSUI_PACKAGE, "neutral")),
+                anyBoolean(),
+                anyInt());
         verify(mOverlayManager, times(1)).commit(any());
     }
 
@@ -321,7 +337,8 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
         List<ThemeOverlayApplier.ApplyResult> results = new ArrayList<>();
 
         mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
-                TEST_USER_HANDLES, results::add);
+                TEST_USER_HANDLES, results::add,
+                /* useBlackTheme= */ false);
 
         assertEquals(List.of(ThemeOverlayApplier.ApplyResult.COMMIT_FAILED), results);
         verify(mOverlayManager, times(1)).commit(any());

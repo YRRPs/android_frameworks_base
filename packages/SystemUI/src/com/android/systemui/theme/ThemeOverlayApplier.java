@@ -205,16 +205,18 @@ public class ThemeOverlayApplier implements Dumpable {
      * @param currentUser Current User ID
      * @param managedProfiles Profiles get overlays
      * @param onComplete Callback for the terminal commit result. Runs on the main thread.
+     * @param useBlackTheme Whether the pure-black overlay should be enabled
      */
     public void applyCurrentUserOverlays(
             Map<String, OverlayIdentifier> categoryToPackage,
             @Nullable FabricatedOverlay[] pendingCreation,
             int currentUser,
             Set<UserHandle> managedProfiles,
-            @Nullable Consumer<ApplyResult> onComplete) {
+            @Nullable Consumer<ApplyResult> onComplete,
+            boolean useBlackTheme) {
         mBgExecutor.execute(() -> {
-            ApplyResult result = applyOverlays(
-                    categoryToPackage, pendingCreation, currentUser, managedProfiles);
+            ApplyResult result = applyOverlays(categoryToPackage, pendingCreation, currentUser,
+                    managedProfiles, useBlackTheme);
             if (onComplete != null) {
                 mMainExecutor.execute(() -> onComplete.accept(result));
             }
@@ -225,13 +227,17 @@ public class ThemeOverlayApplier implements Dumpable {
             Map<String, OverlayIdentifier> categoryToPackage,
             @Nullable FabricatedOverlay[] pendingCreation,
             int currentUser,
-            Set<UserHandle> managedProfiles) {
+            Set<UserHandle> managedProfiles,
+            boolean useBlackTheme) {
         try {
             OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
             Set<OverlayIdentifier> pending = registerPending(transaction, pendingCreation);
             disableUnselected(transaction, categoryToPackage, currentUser, managedProfiles, pending);
             enableSelected(transaction, categoryToPackage, currentUser, managedProfiles, pending);
-            setDarkModeOverlays(transaction, currentUser, pendingCreation);
+            // Apply the night-only black overlay after the neutral palette.
+            setEnabled(transaction, new OverlayIdentifier(OVERLAY_BLACK_THEME),
+                    OVERLAY_CATEGORY_SYSTEM_PALETTE, currentUser, managedProfiles,
+                    useBlackTheme, false);
             mOverlayManager.commit(transaction.build());
             return ApplyResult.SUCCESS;
         } catch (SecurityException | IllegalStateException exception) {
@@ -300,17 +306,6 @@ public class ThemeOverlayApplier implements Dumpable {
             setEnabled(transaction, identifier, category, currentUser, managedProfiles,
                     true, pending.contains(identifier));
         }
-    }
-
-    private void setDarkModeOverlays(
-            OverlayManagerTransaction.Builder transaction,
-            int currentUser,
-            @Nullable FabricatedOverlay[] pendingCreation) {
-        boolean isBlackMode = pendingCreation != null && pendingCreation.length == 2;
-        transaction.setEnabled(
-                new OverlayIdentifier(OVERLAY_BLACK_THEME), isBlackMode, currentUser);
-        transaction.setEnabled(
-                new OverlayIdentifier(SYSUI_PACKAGE, "neutral"), !isBlackMode, currentUser);
     }
 
     @VisibleForTesting
