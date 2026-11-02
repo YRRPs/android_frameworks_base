@@ -332,6 +332,19 @@ public class ThemeOverlayApplierTest extends SysuiTestCase {
     }
 
     @Test
+    public void applyCurrentUserOverlays_blackThemePreference_enablesBlackOverlay() {
+        mManager.applyCurrentUserOverlays(ALL_CATEGORIES_MAP, null, TEST_USER.getIdentifier(),
+                TEST_USER_HANDLES, null,
+                /* useBlackTheme= */ true);
+
+        verify(mTransactionBuilder).setEnabled(
+                eq(new OverlayIdentifier(OVERLAY_BLACK_THEME)),
+                eq(true),
+                eq(TEST_USER.getIdentifier()));
+        verify(mOverlayManager, times(1)).commit(any());
+    }
+
+    @Test
     public void applyCurrentUserOverlays_commitThrows_reportsFailureOnce() {
         doThrow(new SecurityException("denied")).when(mOverlayManager).commit(any());
         List<ThemeOverlayApplier.ApplyResult> results = new ArrayList<>();
